@@ -84,19 +84,52 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
                 with open(config_json, "r", encoding="utf-8") as f:
                     self._vocab = json.load(f)
                     
-                # 解析标签词表 (支持 vocab, label_vocab, 或 labels 键)
-                raw_vocab = self._vocab.get("vocab") or self._vocab.get("label_vocab") or self._vocab.get("labels")
-                if isinstance(raw_vocab, dict):
-                    sample_key = next(iter(raw_vocab.keys())) if raw_vocab else None
-                    if sample_key is not None and str(sample_key).isdigit():
-                        self._id_to_label = {int(k): v for k, v in raw_vocab.items()}
-                        self._label_to_id = {v: int(k) for k, v in raw_vocab.items()}
-                    else:
-                        self._label_to_id = {k: int(v) for k, v in raw_vocab.items()}
-                        self._id_to_label = {int(v): k for k, v in raw_vocab.items()}
+                # 解析标签词表 (优先支持 id2label，其次支持 vocab, label_vocab, labels, label2id)
+                raw_vocab = (
+                    self._vocab.get("id2label") or
+                    self._vocab.get("vocab") or
+                    self._vocab.get("label_vocab") or
+                    self._vocab.get("labels")
+                )
+                if not raw_vocab and self._vocab.get("label2id"):
+                    # 如果只有 label2id，反转为 id2label
+                    l2id = self._vocab.get("label2id")
+                    if isinstance(l2id, dict):
+                        self._label_to_id = {str(k): int(v) for k, v in l2id.items()}
+                        self._id_to_label = {int(v): str(k) for k, v in l2id.items()}
+                elif isinstance(raw_vocab, dict):
+                    self._id_to_label = {}
+                    self._label_to_id = {}
+                    for k, v in raw_vocab.items():
+                        # 判断 k 是数字索引还是标签名
+                        if str(k).isdigit():
+                            kid = int(k)
+                            lbl = str(v)
+                            self._id_to_label[kid] = lbl
+                            self._label_to_id[lbl] = kid
+                        else:
+                            lbl = str(k)
+                            try:
+                                vid = int(v)
+                                self._id_to_label[vid] = lbl
+                                self._label_to_id[lbl] = vid
+                            except ValueError:
+                                pass
                 elif isinstance(raw_vocab, list):
-                    self._id_to_label = {idx: label for idx, label in enumerate(raw_vocab)}
-                    self._label_to_id = {label: idx for idx, label in enumerate(raw_vocab)}
+                    self._id_to_label = {idx: str(label) for idx, label in enumerate(raw_vocab)}
+                    self._label_to_id = {str(label): idx for idx, label in enumerate(raw_vocab)}
+
+                # 如果同时存在 label2id 补充完整
+                if not self._label_to_id and self._vocab.get("label2id"):
+                    for k, v in self._vocab.get("label2id").items():
+                        try:
+                            vid = int(v)
+                            lbl = str(k)
+                            self._label_to_id[lbl] = vid
+                            if vid not in self._id_to_label:
+                                self._id_to_label[vid] = lbl
+                        except ValueError:
+                            pass
 
             # 加载动词形态转换词表 (verb-form-vocab.txt)
             if verb_vocab_txt.exists():
