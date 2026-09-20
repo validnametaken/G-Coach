@@ -7,5 +7,13 @@ from .engine import BaseAnalysisEngine
 from .pipeline import AnalysisPipeline
 from .harper import HarperAnalysisEngine
 from .gector import GectorAnalysisEngine
+from .resolver import AnalysisResolver
 
-__all__ = ["Finding", "BaseAnalysisEngine", "AnalysisPipeline", "HarperAnalysisEngine", "GectorAnalysisEngine"]
+__all__ = [
+    "Finding",
+    "BaseAnalysisEngine",
+    "AnalysisPipeline",
+    "HarperAnalysisEngine",
+    "GectorAnalysisEngine",
+    "AnalysisResolver",
+]
