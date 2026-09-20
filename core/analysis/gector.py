@@ -171,7 +171,16 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
         except Exception as e:
             logger.error(f"Error during GECToR real ONNX inference pass: {e}", exc_info=True)
 
-        return findings
+        # 去重：确保同一位置和替换不会重复添加
+        seen = set()
+        unique_findings = []
+        for f in findings:
+            key = (f.start, f.end, f.original, f.replacement)
+            if key not in seen:
+                seen.add(key)
+                unique_findings.append(f)
+
+        return unique_findings
 
     def _run_inference_pass(self, text: str, pass_idx: int) -> Tuple[List[Finding], str, bool]:
         """执行单轮真实 GECToR ONNX 推理，对齐 BPE 字节级范围并返回 (findings, updated_text, has_changed)。"""
@@ -277,6 +286,10 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
             if updated_text[start:end] != original:
                 continue
 
+            # 如果替换后的文本与原词完全一致（无实际修改），则跳过，防止无效修改导致多遍迭代陷入死循环
+            if replacement == original:
+                continue
+
             confidence = float(min(det_prob, lab_prob))
             finding = Finding(
                 source="gector",
@@ -306,13 +319,49 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
         return findings, updated_text, has_changed
 
     def _apply_transform_verb(self, verb: str, transform_type: str) -> str:
-        """根据词表或规则应用动词形态转换。"""
+        """根据词表、规则或形态转换类型应用动词形态转换（支持 VB_VBZ, PAST, BASE 等）。"""
         if verb in self._verb_vocab:
             return self._verb_vocab[verb]
-        if transform_type == "PAST" and not verb.endswith("ed"):
+
+        v_lower = verb.lower()
+        t_upper = transform_type.upper()
+
+        if "VBZ" in t_upper or t_upper.endswith("VBZ"):
+            if v_lower in ["go", "do"]:
+                return verb + "es"
+            elif v_lower == "have":
+                return "has"
+            elif v_lower == "be":
+                return "is"
+            elif v_lower.endswith(("s", "sh", "ch", "x", "z", "o")):
+                return verb + "es"
+            elif v_lower.endswith("y") and len(v_lower) > 1 and v_lower[-2] not in "aeiou":
+                return verb[:-1] + "ies"
+            else:
+                return verb + "s"
+
+        elif "PAST" in t_upper or "VBD" in t_upper:
+            if v_lower.endswith("e"):
+                return verb + "d"
+            elif v_lower.endswith("y") and len(v_lower) > 1 and v_lower[-2] not in "aeiou":
+                return verb[:-1] + "ied"
+            else:
+                return verb + "ed"
+
+        elif "BASE" in t_upper or "VB" in t_upper:
+            if v_lower.endswith("ies") and len(v_lower) > 3:
+                return verb[:-3] + "y"
+            elif v_lower.endswith("es") and len(v_lower) > 2:
+                return verb[:-2]
+            elif v_lower.endswith(("s", "d")) and len(v_lower) > 1:
+                return verb[:-1]
+            return verb
+
+        if t_upper == "PAST" and not verb.endswith("ed"):
             return verb + "ed"
-        elif transform_type == "BASE" and verb.endswith("ed"):
+        elif t_upper == "BASE" and verb.endswith("ed"):
             return verb[:-2]
+
         return verb
 
     def _simulate_analysis(self, text: str) -> List[Finding]:
