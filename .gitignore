@@ -35,3 +35,7 @@ prompts.json
 .idea/
 Desktop.ini
 Thumbs.db
+
+# Local development / OpenHands
+node_modules/
+.agents_tmp/
