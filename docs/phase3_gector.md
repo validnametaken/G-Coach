@@ -1,20 +1,20 @@
-# Phase 3: GECToR Local Analysis Engine Architecture & Integration
+# Phase 3: GECToR Local Analysis Engine Architecture & Integration (Complete)
 
 ## Overview
-Phase 3 integrates GECToR (Contextual Grammatical Error Correction via ONNX Runtime and Tokenizers) as the second independent local analysis engine implementing the Phase 1 `BaseAnalysisEngine` abstraction.
+Phase 3 integrates GECToR (Contextual Grammatical Error Correction via ONNX Runtime and Tokenizers) as an independent local analysis engine implementing the Phase 1 `BaseAnalysisEngine` abstraction.
 
-## Architecture & Integration Method
-- **Selected Mechanism**: Python-based `GectorAnalysisEngine` using ONNX Runtime (`onnxruntime`) and HuggingFace `tokenizers` for local inference and token/word alignment.
-- **Model Distribution & Location**: Configurable via `model_dir` (defaulting to `models/gector/` or `GECTOR_MODEL_DIR`). To prevent bloating the Git repository with ~513 MB model binaries, model files (`model.onnx`, `model.onnx.data`, `tokenizer.json`, `config.json`, etc.) are intended to be placed in local deployment storage or downloaded externally, with graceful fallback/simulation support when missing during unit testing.
-- **Offline Capability**: Fully local and offline (CPUExecutionProvider). No cloud APIs required.
+## Architecture & Real ONNX Inference
+- **Inference Mechanism**: Python-based `GectorAnalysisEngine` using ONNX Runtime (`onnxruntime`) and HuggingFace `tokenizers` (`tokenizer.json`) for local inference and byte-level BPE token/word range alignment.
+- **Model Distribution & Location**: Configurable via `model_dir` (defaulting to `models/gector/` or `GECTOR_MODEL_DIR`). Model files (`model.onnx`, `tokenizer.json`, `config.json`, `verb-form-vocab.txt`) are placed in local deployment storage or downloaded externally, with graceful fallback/simulation support when missing during unit testing.
+- **Offline Capability**: Fully local and offline (`CPUExecutionProvider`). No cloud APIs required.
 
 ## Tokenization & Character Range Mapping
-- Uses RoBERTa-based tokenizer (`tokenizer.json`) with word ID mapping (`is_split_into_words=True` semantics).
-- Maps BPE token pieces back to source words and exact character spans `[start, end)`.
+- Uses RoBERTa-based byte-level BPE tokenizer (`tokenizer.json`) with offset mappings (`encoding.offsets`).
+- Maps BPE token pieces back to exact character spans `[start, end)`.
 - Enforces strict validation: `text[start:end] == original`.
 
 ## Edit Operations & Iterative Passes
-- Supports GECToR tag-based correction operations (`$KEEP`, `$DELETE`, `$APPEND_x`, `$REPLACE_x`, `$TRANSFORM_*`).
+- Supports GECToR tag-based correction operations (`$KEEP`, `$DELETE`, `$APPEND_x`, `$REPLACE_x`, `$TRANSFORM_VERB_*`).
 - Implements multi-pass iterative correction (configurable `max_passes`, default 5) with right-to-left offset-preserving application.
 
 ## Confidence & Thresholding
