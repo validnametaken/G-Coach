@@ -186,30 +186,38 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
         if self.text_snapshot_edit.toPlainText() != summary['text']:
             self.text_snapshot_edit.setPlainText(summary['text'])
 
-        # 更新 Findings 列表
-        new_findings = summary['findings']
-        if new_findings != self.current_findings:
-            self.current_findings = new_findings
-            self.findings_list_widget.clear()
+        # Phase 6.x: 如果处于等待或分析中状态，在 findings 列表或状态栏提示正在检查，避免用户误认旧结果
+        if summary['is_pending']:
+            self.statusBar().showMessage(summary['pending_message'])
+            # 可以在列表显示一个临时的检查提示项，让用户感知正在为新生成文本工作
+            if self.findings_list_widget.count() == 0 or not any("Checking" in self.findings_list_widget.item(i).text() for i in range(self.findings_list_widget.count())):
+                # 仅当没有临时提示时添加
+                pass
+        else:
+            # 更新 Findings 列表
+            new_findings = summary['findings']
+            if new_findings != self.current_findings:
+                self.current_findings = new_findings
+                self.findings_list_widget.clear()
 
-            # 检查是否有冲突
-            groups = UIPresenter.group_findings_by_text(new_findings)
+                # 检查是否有冲突
+                groups = UIPresenter.group_findings_by_text(new_findings)
 
-            for finding in new_findings:
-                summary_line = UIPresenter.format_finding_summary(finding)
-                
-                # 如果同一原始文本存在多个引擎的建议（冲突），加上标记
-                if len(groups.get(finding.original, [])) > 1:
-                    summary_line = f"⚠️ [CONFLICT] {summary_line}"
+                for finding in new_findings:
+                    summary_line = UIPresenter.format_finding_summary(finding)
+                    
+                    # 如果同一原始文本存在多个引擎的建议（冲突），加上标记
+                    if len(groups.get(finding.original, [])) > 1:
+                        summary_line = f"⚠️ [CONFLICT] {summary_line}"
 
-                item = QListWidgetItem(summary_line)
-                item.setData(Qt.ItemDataRole.UserRole, finding)
-                self.findings_list_widget.addItem(item)
+                    item = QListWidgetItem(summary_line)
+                    item.setData(Qt.ItemDataRole.UserRole, finding)
+                    self.findings_list_widget.addItem(item)
 
-            if summary['has_conflicts']:
-                self.statusBar().showMessage(f"Found {len(new_findings)} findings with multi-engine conflicts.")
-            else:
-                self.statusBar().showMessage(f"Found {len(new_findings)} findings.")
+                if summary['has_conflicts']:
+                    self.statusBar().showMessage(f"Found {len(new_findings)} findings with multi-engine conflicts.")
+                else:
+                    self.statusBar().showMessage(f"Found {len(new_findings)} findings (Ready).")
 
     def _on_finding_selected(self):
         """当用户在列表中选择某条 Finding 时展示其详情与冲突分析"""

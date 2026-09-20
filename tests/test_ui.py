@@ -102,6 +102,24 @@ class TestUIPresenter(unittest.TestCase):
         self.assertEqual(summary["findings_count"], 3)
         self.assertTrue(summary["has_conflicts"])  # "go" has two conflicting suggestions ("goes" vs "went")
 
+    def test_phase_6_x_polish_pending_states(self):
+        """测试 Phase 6.x UI 润色要求：等待/分析中状态、is_pending、提示消息及干净文本（零发现）"""
+        state_waiting = MonitorState(generation=2, text="Checking text", status="waiting")
+        summary_waiting = UIPresenter.format_state_summary(state_waiting)
+        self.assertTrue(summary_waiting["is_pending"])
+        self.assertIn("Waiting", summary_waiting["pending_message"])
+
+        state_analyzing = MonitorState(generation=2, text="Checking text", status="analyzing")
+        summary_analyzing = UIPresenter.format_state_summary(state_analyzing)
+        self.assertTrue(summary_analyzing["is_pending"])
+        self.assertIn("Checking", summary_analyzing["pending_message"])
+
+        state_clean_ready = MonitorState(generation=3, text="She goes to school.", findings=[], status="ready")
+        summary_clean = UIPresenter.format_state_summary(state_clean_ready)
+        self.assertFalse(summary_clean["is_pending"])
+        self.assertEqual(summary_clean["findings_count"], 0)
+        self.assertEqual(summary_clean["status_text"], "Ready")
+
 
 if __name__ == "__main__":
     unittest.main()
