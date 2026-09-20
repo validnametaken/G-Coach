@@ -70,6 +70,20 @@ class UIPresenter:
         return groups
 
     @classmethod
+    def is_pending(cls, status: str) -> bool:
+        """检查状态是否为等待防抖或分析中"""
+        return status in ("waiting", "analyzing")
+
+    @classmethod
+    def format_analyzing_message(cls, generation: int, status: str) -> str:
+        """格式化分析中/等待中的提示信息"""
+        if status == "waiting":
+            return f"⏳ Waiting (debounce) for generation {generation}..."
+        elif status == "analyzing":
+            return f"🔍 Checking grammar and style (generation {generation})..."
+        return f"Checking... (generation {generation})"
+
+    @classmethod
     def format_state_summary(cls, state: MonitorState) -> Dict[str, Any]:
         """将 MonitorState 转换为 UI 友好的摘要结构"""
         status_str = cls.format_status(state.status)
@@ -90,4 +104,6 @@ class UIPresenter:
             "error_message": state.error_message,
             "timestamp": state.timestamp,
             "generation": state.generation,
+            "is_pending": cls.is_pending(state.status),
+            "pending_message": cls.format_analyzing_message(state.generation, state.status) if cls.is_pending(state.status) else "",
         }
