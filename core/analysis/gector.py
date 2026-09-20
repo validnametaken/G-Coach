@@ -41,7 +41,8 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
         self._vocab: Dict[str, Any] = {}
         self._id_to_label: Dict[int, str] = {}
         self._label_to_id: Dict[str, int] = {}
-        self._verb_vocab: Dict[str, str] = {}
+        self._verb_vocab: Dict[str, str] = {}       # base -> inflected (e.g. go -> went)
+        self._inv_verb_vocab: Dict[str, str] = {}   # inflected -> base (e.g. went -> go)
         self._is_loaded = False
 
     @property
@@ -131,13 +132,15 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
                         except ValueError:
                             pass
 
-            # 加载动词形态转换词表 (verb-form-vocab.txt)
+            # 加载动词形态转换词表 (verb-form-vocab.txt，支持双向 base <-> inflected 映射)
             if verb_vocab_txt.exists():
                 with open(verb_vocab_txt, "r", encoding="utf-8") as f:
                     for line in f:
                         parts = line.strip().split()
                         if len(parts) >= 2:
-                            self._verb_vocab[parts[0]] = parts[1]
+                            base, inflected = parts[0], parts[1]
+                            self._verb_vocab[base] = inflected
+                            self._inv_verb_vocab[inflected] = base
 
             self._is_loaded = True
             logger.info(f"Successfully loaded GECToR model from {self.model_dir}")
@@ -319,50 +322,144 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
         return findings, updated_text, has_changed
 
     def _apply_transform_verb(self, verb: str, transform_type: str) -> str:
-        """根据词表、规则或形态转换类型应用动词形态转换（支持 VB_VBZ, PAST, BASE 等）。"""
-        if verb in self._verb_vocab:
-            return self._verb_vocab[verb]
+        """根据完整的 Source -> Base -> Target 管道转换动词形态。
 
+        transform_type 格式通常为 {SRC}_{TGT}（例如 VB_VBZ, VBD_VB, VBZ_VB, VBG_VB, VBN_VB 等）。
+        步骤：
+        1. 解析 SRC 和 TGT（例如 "VBD_VB" -> src="VBD", tgt="VB"）。
+        2. 将动词从当前形态 (SRC) 规范化/还原为 Base 形态 (VB)。
+           - 优先使用 _inv_verb_vocab 或 _verb_vocab。
+           - 其次使用不规则动词表兜底。
+           - 最后使用规则形态还原。
+        3. 如果 TGT 为 VB，则直接返回 Base 形态；
+           如果 TGT 为其他形态（如 VBZ, PAST/VBD 等），再将 Base 形态转换/inflect 到 TGT 形态。
+        """
         v_lower = verb.lower()
         t_upper = transform_type.upper()
 
-        if "VBZ" in t_upper or t_upper.endswith("VBZ"):
-            if v_lower in ["go", "do"]:
-                return verb + "es"
-            elif v_lower == "have":
+        # 解析源与目标 POS/tense (例如 "VB_VBZ" -> src="VB", tgt="VBZ")
+        src, tgt = "VB", "VB"
+        if "_" in t_upper:
+            parts = t_upper.split("_")
+            if len(parts) >= 3 and parts[0] == "TRANSFORM" and parts[1] == "VERB":
+                src, tgt = parts[2], parts[3]
+            elif len(parts) == 2:
+                src, tgt = parts[0], parts[1]
+        elif t_upper in ["PAST", "BASE", "VBZ"]:
+            if t_upper == "PAST":
+                src, tgt = "VB", "VBD"
+            elif t_upper == "BASE":
+                src, tgt = "VBD", "VB"
+            elif t_upper == "VBZ":
+                src, tgt = "VB", "VBZ"
+
+        # -------------------------------------------------------------
+        # 步骤 1: 将当前词 (SRC) 规范化还原为 Base Form (VB)
+        # -------------------------------------------------------------
+        base_form = v_lower
+        if src != "VB":
+            # 如果当前词是 inflected (如 went, goes, running)，先通过词表或规则转为 Base (go, go, run)
+            if v_lower in self._inv_verb_vocab:
+                base_form = self._inv_verb_vocab[v_lower]
+            elif v_lower in self._verb_vocab:
+                # 检查 _verb_vocab 是否反向包含
+                pass
+            else:
+                # 常见不规则动词规范化兜底
+                irregular_map = {
+                    "went": "go", "was": "be", "were": "be", "did": "do",
+                    "had": "have", "sat": "sit", "ran": "run", "came": "come",
+                    "saw": "see", "ate": "eat", "eaten": "eat", "took": "take",
+                    "taken": "take", "made": "make", "said": "say", "got": "get",
+                    "gotten": "get", "thought": "think", "goes": "go", "does": "do",
+                    "has": "have", "is": "be", "are": "be", "am": "be"
+                }
+                if v_lower in irregular_map:
+                    base_form = irregular_map[v_lower]
+                elif src in ["VBZ", "VBP"] or v_lower.endswith(("s", "es", "ies")):
+                    if v_lower.endswith("ies") and len(v_lower) > 3:
+                        base_form = v_lower[:-3] + "y"
+                    elif v_lower.endswith("es") and len(v_lower) > 2:
+                        base_form = v_lower[:-2]
+                    elif v_lower.endswith("s") and len(v_lower) > 1:
+                        base_form = v_lower[:-1]
+                elif src in ["VBD", "PAST"] or v_lower.endswith("ed"):
+                    if v_lower.endswith("ed") and len(v_lower) > 2:
+                        base_form = v_lower[:-2]
+                elif src == "VBG" or v_lower.endswith("ing"):
+                    if v_lower.endswith("ing") and len(v_lower) > 3:
+                        # 处理双写辅音字母如 running -> run
+                        stem = v_lower[:-3]
+                        if len(stem) > 1 and stem[-1] == stem[-2] and stem[-1] not in "aeiou":
+                            stem = stem[:-1]
+                        base_form = stem
+
+        # -------------------------------------------------------------
+        # 步骤 2: 将 Base Form (VB) 转换/inflect 到目标形态 (TGT)
+        # -------------------------------------------------------------
+        if tgt == "VB":
+            return base_form
+
+        # 目标为 inflected (VBZ, VBD, VBG, VBN 等)
+        # 优先通过 _verb_vocab 查询 base -> inflected
+        if base_form in self._verb_vocab:
+            # 如果词表中的形态正好匹配目标时态，直接返回
+            # 例如 go -> went (past) 或 goes (vbz)
+            mapped = self._verb_vocab[base_form]
+            if tgt in ["VBZ", "VBP"] and mapped.endswith(("s", "es")):
+                return mapped
+            elif tgt in ["PAST", "VBD"] and (mapped.endswith("ed") or base_form in ["go", "be", "have", "do", "sit", "run", "come", "see", "eat", "take", "make", "say", "get", "think"]):
+                if base_form == "go" and tgt in ["PAST", "VBD"]:
+                    return "went"
+                return mapped
+
+        if tgt in ["VBZ", "VBP"]:
+            if base_form in ["go", "do"]:
+                return base_form + "es"
+            elif base_form == "have":
                 return "has"
-            elif v_lower == "be":
+            elif base_form == "be":
                 return "is"
-            elif v_lower.endswith(("s", "sh", "ch", "x", "z", "o")):
-                return verb + "es"
-            elif v_lower.endswith("y") and len(v_lower) > 1 and v_lower[-2] not in "aeiou":
-                return verb[:-1] + "ies"
+            elif base_form.endswith(("s", "sh", "ch", "x", "z", "o")):
+                return base_form + "es"
+            elif base_form.endswith("y") and len(base_form) > 1 and base_form[-2] not in "aeiou":
+                return base_form[:-1] + "ies"
             else:
-                return verb + "s"
+                return base_form + "s"
 
-        elif "PAST" in t_upper or "VBD" in t_upper:
-            if v_lower.endswith("e"):
-                return verb + "d"
-            elif v_lower.endswith("y") and len(v_lower) > 1 and v_lower[-2] not in "aeiou":
-                return verb[:-1] + "ied"
+        elif tgt in ["PAST", "VBD"]:
+            if base_form == "go":
+                return "went"
+            elif base_form == "be":
+                return "was"
+            elif base_form == "have":
+                return "had"
+            elif base_form == "do":
+                return "did"
+            elif base_form.endswith("e"):
+                return base_form + "d"
+            elif base_form.endswith("y") and len(base_form) > 1 and base_form[-2] not in "aeiou":
+                return base_form[:-1] + "ied"
             else:
-                return verb + "ed"
+                return base_form + "ed"
 
-        elif "BASE" in t_upper or "VB" in t_upper:
-            if v_lower.endswith("ies") and len(v_lower) > 3:
-                return verb[:-3] + "y"
-            elif v_lower.endswith("es") and len(v_lower) > 2:
-                return verb[:-2]
-            elif v_lower.endswith(("s", "d")) and len(v_lower) > 1:
-                return verb[:-1]
-            return verb
+        elif tgt == "VBG":
+            if base_form.endswith("e") and not base_form.endswith("ee"):
+                return base_form[:-1] + "ing"
+            return base_form + "ing"
 
-        if t_upper == "PAST" and not verb.endswith("ed"):
-            return verb + "ed"
-        elif t_upper == "BASE" and verb.endswith("ed"):
-            return verb[:-2]
+        elif tgt == "VBN":
+            if base_form in ["go"]:
+                return "gone"
+            elif base_form in ["be"]:
+                return "been"
+            elif base_form in ["eat"]:
+                return "eaten"
+            elif base_form.endswith("e"):
+                return base_form + "d"
+            return base_form + "ed"
 
-        return verb
+        return base_form
 
     def _simulate_analysis(self, text: str) -> List[Finding]:
         """为离线/测试环境提供完整的确定性规范化模拟分析（当未下载 513MB ONNX 模型二进制时）。
