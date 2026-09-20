@@ -130,5 +130,21 @@ class TestGectorAnalysisEngine(unittest.TestCase):
         self.assertEqual(f.start, 13)
         self.assertEqual(f.end, 16)
 
+    def test_regression_transform_verb_vb_vbz(self):
+        """测试 $TRANSFORM_VERB_VB_VBZ 能够正确将 go 转换为 goes 且不产生重复 findings"""
+        self.engine._id_to_label[999] = "$TRANSFORM_VERB_VB_VBZ"
+        self.engine._label_to_id["$TRANSFORM_VERB_VB_VBZ"] = 999
+        
+        # 测试动词转换函数本身
+        res = self.engine._apply_transform_verb("go", "VB_VBZ")
+        self.assertEqual(res, "goes")
+        
+        res_other = self.engine._apply_transform_verb("catch", "VB_VBZ")
+        self.assertEqual(res_other, "catches")
+
+        # 测试分析 clean text 不产生 findings
+        clean_findings = self.engine.analyze("She goes to school every day.")
+        self.assertEqual(clean_findings, [])
+
 if __name__ == "__main__":
     unittest.main()
