@@ -146,5 +146,25 @@ class TestGectorAnalysisEngine(unittest.TestCase):
         clean_findings = self.engine.analyze("She goes to school every day.")
         self.assertEqual(clean_findings, [])
 
+    def test_regression_transform_verb_vbd_vb(self):
+        """测试 $TRANSFORM_VERB_VBD_VB 能够正确将 went 转换为 go（过去式还原为动词原形）"""
+        self.engine._id_to_label[998] = "$TRANSFORM_VERB_VBD_VB"
+        self.engine._label_to_id["$TRANSFORM_VERB_VBD_VB"] = 998
+
+        # 测试反向动词转换函数本身
+        res = self.engine._apply_transform_verb("went", "VBD_VB")
+        self.assertEqual(res, "go")
+
+        res_other = self.engine._apply_transform_verb("sat", "VBD_VB")
+        self.assertEqual(res_other, "sit")
+
+    def test_regression_transform_verb_comprehensive(self):
+        """全面测试各种前向与反向动词转换标签（VB_VBZ, VBD_VB, VBZ_VB, VBG_VB 等）"""
+        self.assertEqual(self.engine._apply_transform_verb("go", "VB_VBZ"), "goes")
+        self.assertEqual(self.engine._apply_transform_verb("went", "VBD_VB"), "go")
+        self.assertEqual(self.engine._apply_transform_verb("goes", "VBZ_VB"), "go")
+        self.assertEqual(self.engine._apply_transform_verb("running", "VBG_VB"), "run")
+        self.assertEqual(self.engine._apply_transform_verb("eaten", "VBN_VB"), "eat")
+
 if __name__ == "__main__":
     unittest.main()
