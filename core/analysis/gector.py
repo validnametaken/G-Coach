@@ -187,54 +187,53 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
             if not original.strip():
                 continue
 
-            det_pred = int(np.argmax(prob_d[i]))
-            det_prob = float(prob_d[i][det_pred])
+            lab_idx = int(np.argmax(prob_l[i]))
+            lab_prob = float(prob_l[i][lab_idx])
             
-            if det_pred > 0 or det_prob >= self.det_threshold:
-                lab_idx = int(np.argmax(prob_l[i]))
-                lab_prob = float(prob_l[i][lab_idx])
-                
-                label_str = self._id_to_label.get(lab_idx, "$KEEP")
-                
-                if label_str == "$KEEP" or label_str == "<PAD>" or label_str == "$CORRECT":
-                    continue
+            label_str = self._id_to_label.get(lab_idx, "$KEEP")
+            
+            if label_str == "$KEEP" or label_str == "<PAD>" or label_str == "$CORRECT" or not label_str:
+                continue
 
-                if det_prob < self.det_threshold or lab_prob < self.lab_threshold:
-                    continue
+            if lab_prob < self.lab_threshold:
+                continue
 
+            # 获取检测概率（若有 2 类检测头，索引 1 代表 INCORRECT 概率）
+            det_prob = float(prob_d[i][1]) if prob_d.shape[-1] > 1 else float(np.max(prob_d[i]))
+
+            replacement = ""
+            category = "grammar"
+            message = "Grammatical correction suggested by GECToR."
+
+            if label_str == "$DELETE":
                 replacement = ""
-                category = "grammar"
-                message = "Grammatical correction suggested by GECToR."
-
-                if label_str == "$DELETE":
-                    replacement = ""
-                    category = "style"
-                    message = "Delete unnecessary word."
-                elif label_str.startswith("$REPLACE_"):
-                    replacement = label_str[len("$REPLACE_"):]
-                    if original.lower() in ["is", "am", "are", "was", "were", "has", "have", "had", "do", "does", "did"]:
-                        category = "verb_form"
-                        message = f"Subject-verb agreement or verb form correction: use '{replacement}'."
-                    elif original.lower() in ["a", "an", "the"]:
-                        category = "article"
-                        message = f"Article correction: use '{replacement}'."
-                    else:
-                        category = "subject_verb_agreement"
-                        message = f"Suggested correction: use '{replacement}'."
-                elif label_str.startswith("$APPEND_"):
-                    appended = label_str[len("$APPEND_"):]
-                    replacement = original + appended
-                    category = "grammar"
-                    message = f"Insert missing element '{appended}'."
-                elif label_str.startswith("$TRANSFORM_VERB_"):
-                    transform_type = label_str[len("$TRANSFORM_VERB_"):]
-                    replacement = self._apply_transform_verb(original, transform_type)
+                category = "style"
+                message = "Delete unnecessary word."
+            elif label_str.startswith("$REPLACE_"):
+                replacement = label_str[len("$REPLACE_"):]
+                if original.lower() in ["is", "am", "are", "was", "were", "has", "have", "had", "do", "does", "did"]:
                     category = "verb_form"
-                    message = f"Verb form transformation: change '{original}' to '{replacement}'."
+                    message = f"Subject-verb agreement or verb form correction: use '{replacement}'."
+                elif original.lower() in ["a", "an", "the"]:
+                    category = "article"
+                    message = f"Article correction: use '{replacement}'."
                 else:
-                    continue
+                    category = "subject_verb_agreement"
+                    message = f"Suggested correction: use '{replacement}'."
+            elif label_str.startswith("$APPEND_"):
+                appended = label_str[len("$APPEND_"):]
+                replacement = original + appended
+                category = "grammar"
+                message = f"Insert missing element '{appended}'."
+            elif label_str.startswith("$TRANSFORM_VERB_"):
+                transform_type = label_str[len("$TRANSFORM_VERB_"):]
+                replacement = self._apply_transform_verb(original, transform_type)
+                category = "verb_form"
+                message = f"Verb form transformation: change '{original}' to '{replacement}'."
+            else:
+                continue
 
-                edits.append((start_char, end_char, original, replacement, det_prob, lab_prob, label_str))
+            edits.append((start_char, end_char, original, replacement, det_prob, lab_prob, label_str))
 
         edits.sort(key=lambda x: x[0], reverse=True)
 
