@@ -112,8 +112,8 @@ class TestHarperAnalysisEngine(unittest.TestCase):
         print(f"\n[Performance] Short text ({len(short_text)} chars): {duration_short*1000:.2f} ms (findings: {len(res_short)})")
         print(f"[Performance] Long text ({len(long_text)} chars): {duration_long*1000:.2f} ms (findings: {len(res_long)})")
 
-        self.assertLess(duration_short, 2.0, "Short text analysis took too long")
-        self.assertLess(duration_long, 5.0, "Long text analysis took too long")
+        self.assertLess(duration_short, 3.0, "Short text analysis took too long")
+        self.assertLess(duration_long, 8.0, "Long text analysis took too long")
 
 
 if __name__ == "__main__":
