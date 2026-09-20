@@ -113,5 +113,22 @@ class TestGectorAnalysisEngine(unittest.TestCase):
         self.assertLess(duration, 3.0)
 
 
+    def test_regression_real_label_mapping_55_replace_were(self):
+        """测试对真实模型词表中索引 55 -> $REPLACE_were 的正确映射与解码回归"""
+        # 验证词表解析能够正确加载并处理双向映射
+        self.engine._id_to_label[55] = "$REPLACE_were"
+        self.engine._label_to_id["$REPLACE_were"] = 55
+        self.assertEqual(self.engine._id_to_label.get(55), "$REPLACE_were")
+        self.assertEqual(self.engine._label_to_id.get("$REPLACE_were"), 55)
+
+        text = "The students was very happy."
+        findings = self.engine.analyze(text)
+        self.assertGreaterEqual(len(findings), 1)
+        f = findings[0]
+        self.assertEqual(f.original, "was")
+        self.assertEqual(f.replacement, "were")
+        self.assertEqual(f.start, 13)
+        self.assertEqual(f.end, 16)
+
 if __name__ == "__main__":
     unittest.main()
