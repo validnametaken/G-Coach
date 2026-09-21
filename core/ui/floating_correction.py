@@ -57,7 +57,7 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.WindowDoesNotAcceptFocus
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActive, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
 
         # 在 Windows 平台上应用 WS_EX_NOACTIVATE (0x08000000) 扩展样式
