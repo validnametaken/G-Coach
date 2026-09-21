@@ -5,7 +5,7 @@ Unit tests for LiveTextMonitor, debounce, generation tracking, and stale result 
 import time
 import unittest
 from core.analysis import AnalysisPipeline, AnalysisResolver, Finding, BaseAnalysisEngine
-from core.monitoring import MockTextSource, LiveTextMonitor
+from core.monitoring import MockTextSource, MultiControlMockTextSource, LiveTextMonitor
 
 
 class DummyAnalysisEngine(BaseAnalysisEngine):
@@ -194,6 +194,48 @@ class TestLiveTextMonitor(unittest.TestCase):
         self.assertTrue(self.monitor._is_running)
         self.monitor.stop()
         self.assertFalse(self.monitor._is_running)
+
+    def test_control_switching_isolates_context(self):
+        """测试当聚焦控件切换时，LiveTextMonitor 自动隔离旧 findings 并不混淆文本"""
+        controls = [
+            {"control_id": "ctrl-1", "app_name": "App1", "text": "This has error text", "is_editable": True},
+            {"control_id": "ctrl-2", "app_name": "App2", "text": "Clean text in app two", "is_editable": True},
+        ]
+        multi_source = MultiControlMockTextSource(controls)
+        
+        monitor = LiveTextMonitor(
+            text_source=multi_source,
+            pipeline=self.pipeline,
+            resolver=self.resolver,
+            debounce_interval=0.05,
+            poll_interval=0.01,
+        )
+        monitor.start()
+        try:
+            # 1. 触发 ctrl-1 分析出 finding
+            monitor.trigger_check()
+            time.sleep(0.08)
+            state1 = monitor.get_state()
+            self.assertEqual(state1.status, "ready")
+            self.assertEqual(len(state1.findings), 1)
+            self.assertEqual(state1.control_id, "ctrl-1")
+
+            # 2. 切换到 ctrl-2 (具有干净文本)
+            multi_source.select_control(1)
+            state_switched = monitor.trigger_check()
+            # 切换控件时应立即进入 waiting 状态并清空旧 findings
+            self.assertEqual(state_switched.status, "waiting")
+            self.assertEqual(state_switched.control_id, "ctrl-2")
+            self.assertEqual(state_switched.findings, [])
+
+            # 等待 ctrl-2 分析完成
+            time.sleep(0.08)
+            state2 = monitor.get_state()
+            self.assertEqual(state2.status, "ready")
+            self.assertEqual(state2.control_id, "ctrl-2")
+            self.assertEqual(state2.findings, [])
+        finally:
+            monitor.stop()
 
 
 if __name__ == "__main__":
