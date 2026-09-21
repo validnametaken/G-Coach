@@ -337,8 +337,8 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
         # 选择第一个高优 finding 进行悬浮展示
         active_finding = findings[0]
 
-        # 如果 finding 发生变化，更新或重建弹窗
-        if self.last_popup_finding_id != active_finding.id:
+        # 如果当前没有弹出窗口，或者 finding 发生变化，则创建/重建弹窗
+        if self.active_popup is None or self.last_popup_finding_id != active_finding.id:
             if self.active_popup:
                 self.active_popup.close()
                 self.active_popup = None
