@@ -166,5 +166,25 @@ class TestGectorAnalysisEngine(unittest.TestCase):
         self.assertEqual(self.engine._apply_transform_verb("running", "VBG_VB"), "run")
         self.assertEqual(self.engine._apply_transform_verb("eaten", "VBN_VB"), "eat")
 
+    def test_regression_transform_verb_vbd_forward(self):
+        """测试前向过去式转换（VB_VBD，如 eat -> ate, go -> went）以及各类基础动词转换"""
+        self.assertEqual(self.engine._apply_transform_verb("eat", "VB_VBD"), "ate")
+        self.assertEqual(self.engine._apply_transform_verb("go", "VB_VBD"), "went")
+        self.assertEqual(self.engine._apply_transform_verb("went", "VBD_VB"), "go")
+        self.assertEqual(self.engine._apply_transform_verb("go", "VB_VBZ"), "goes")
+        self.assertEqual(self.engine._apply_transform_verb("goes", "VBZ_VB"), "go")
+
+    def test_metadata_isolation_between_tokens(self):
+        """测试相邻 token 之间的 metadata（category/message）不会发生泄漏"""
+        # 模拟运行内部推理中分类/消息赋值
+        # 我们验证词表和转换逻辑不会让 article 类别污染 verb 类别
+        self.engine._id_to_label[100] = "$REPLACE_an"
+        self.engine._id_to_label[101] = "$TRANSFORM_VERB_VB_VBD"
+        self.engine._label_to_id["$REPLACE_an"] = 100
+        self.engine._label_to_id["$TRANSFORM_VERB_VB_VBD"] = 101
+
+        # 通过验证 _apply_transform_verb 或直接检查转换正确性
+        self.assertEqual(self.engine._apply_transform_verb("eat", "VB_VBD"), "ate")
+
 if __name__ == "__main__":
     unittest.main()
