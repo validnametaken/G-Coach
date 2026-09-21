@@ -120,6 +120,28 @@ class TestUIPresenter(unittest.TestCase):
         self.assertEqual(summary_clean["findings_count"], 0)
         self.assertEqual(summary_clean["status_text"], "Ready")
 
+    def test_monitor_lifecycle_integration(self):
+        """测试监控器与分析管道的生命周期集成（Phase 8B 启动与关闭）"""
+        from core.analysis import AnalysisPipeline, AnalysisResolver, HarperAnalysisEngine
+        from core.monitoring import MockTextSource, LiveTextMonitor
+
+        pipeline = AnalysisPipeline()
+        pipeline.register_engine(HarperAnalysisEngine())
+        resolver = AnalysisResolver()
+        text_source = MockTextSource(initial_text="Hello world")
+        monitor = LiveTextMonitor(
+            text_source=text_source,
+            pipeline=pipeline,
+            resolver=resolver,
+            debounce_interval=0.05,
+            poll_interval=0.01,
+        )
+        self.assertFalse(monitor._is_running)
+        monitor.start()
+        self.assertTrue(monitor._is_running)
+        monitor.stop()
+        self.assertFalse(monitor._is_running)
+
 
 if __name__ == "__main__":
     unittest.main()

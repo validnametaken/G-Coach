@@ -330,3 +330,68 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
         except Exception as e:
             logger.error(f"Error stopping monitor on close: {e}", exc_info=True)
         event.accept()
+
+
+def main():
+    """G-Coach 桌面应用主入口（Phase 8B 应用生命周期与启动集成）
+
+    1. 初始化 PyQt6 QApplication
+    2. 创建 AnalysisPipeline 并注册 HarperAnalysisEngine 与 GectorAnalysisEngine
+    3. 创建 AnalysisResolver
+    4. 根据平台创建文本源（在 Windows 上使用 WindowsUIAccessibilityTextSource，在非 Windows 上或测试中使用 MockTextSource）
+    5. 创建 LiveTextMonitor 并启动监控
+    6. 创建 GCoachWindow 并显示
+    7. 进入 Qt 事件循环，并在退出时清理/停止监控器
+    """
+    import platform
+    from core.analysis import AnalysisPipeline, AnalysisResolver, HarperAnalysisEngine, GectorAnalysisEngine
+    from core.monitoring import WindowsUIAccessibilityTextSource, MockTextSource, LiveTextMonitor
+
+    # 1. 初始化 Qt 应用
+    app = QApplication(sys.argv) if PYQT_AVAILABLE else None
+    if not app:
+        logger.error("Cannot launch G-Coach UI: PyQt6 is not available.")
+        sys.exit(1)
+
+    # 2. 创建分析管道与引擎
+    pipeline = AnalysisPipeline()
+    pipeline.register_engine(HarperAnalysisEngine())
+    pipeline.register_engine(GectorAnalysisEngine())
+
+    # 3. 创建消解层
+    resolver = AnalysisResolver()
+
+    # 4. 创建文本源（Windows 自动选择 UIA 文本源，非 Windows 使用 Mock 文本源以便在开发或测试环境中正常运行）
+    if platform.system() == "Windows":
+        text_source = WindowsUIAccessibilityTextSource()
+        logger.info("Initialized WindowsUIAccessibilityTextSource for global Windows monitoring.")
+    else:
+        text_source = MockTextSource(initial_text="G-Coach Phase 8B running in non-Windows mode.", app_name="DevelopmentMock")
+        logger.info("Initialized MockTextSource for non-Windows development mode.")
+
+    # 5. 创建 LiveTextMonitor
+    monitor = LiveTextMonitor(
+        text_source=text_source,
+        pipeline=pipeline,
+        resolver=resolver,
+        debounce_interval=0.4,
+        poll_interval=0.05,
+    )
+
+    # 6. 默认启动监控
+    monitor.start()
+
+    # 7. 创建主窗口
+    window = GCoachWindow(monitor)
+    window.show()
+
+    # 8. 运行 Qt 事件循环
+    exit_code = app.exec()
+
+    # 9. 干净退出时停止监控器
+    monitor.stop()
+    sys.exit(exit_code)
+
+
+if __name__ == "__main__":
+    main()
