@@ -47,6 +47,63 @@ class TestCorrectionController(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.new_text, "test exam test")
 
+    def test_phase_8e_correction_target_and_engine(self):
+        """测试 Phase 8E 纠正目标 (CorrectionTarget) 验证与后台引擎 (BackgroundCorrectionEngine) 文本替换构造"""
+        from core.correction.target import CorrectionTarget
+        from core.correction.engine import BackgroundCorrectionEngine
+        from core.monitoring import TextSnapshot
+
+        snapshot = TextSnapshot(
+            text="The students was very happy.",
+            control_id="ctrl-test-123",
+            process_id=1000,
+            control_type="EditControl",
+            app_name="Telegram.exe",
+            metadata={"hwnd": 12345, "automation_id": "auto-1"}
+        )
+        target = CorrectionTarget.from_snapshot(snapshot)
+        self.assertEqual(target.control_id, "ctrl-test-123")
+        self.assertEqual(target.process_id, 1000)
+
+        # 验证快照校验
+        self.assertTrue(target.validate_current_snapshot(snapshot))
+
+        # 验证错误的 control_id 被拒绝
+        wrong_snapshot = TextSnapshot(text="Other text", control_id="ctrl-wrong", process_id=1000)
+        self.assertFalse(target.validate_current_snapshot(wrong_snapshot))
+
+        # 验证 BackgroundCorrectionEngine 替换构造
+        finding = Finding(
+            source="harper",
+            category="grammar",
+            message="Agreement",
+            original="was",
+            replacement="were",
+            start=13,
+            end=16,
+        )
+        success = BackgroundCorrectionEngine.apply_correction_to_target(target, finding)
+        self.assertTrue(success)
+
+        # 测试重复文本中的精确替换
+        repeat_snapshot = TextSnapshot(
+            text="The was was difficult.",
+            control_id="ctrl-repeat",
+        )
+        repeat_target = CorrectionTarget.from_snapshot(repeat_snapshot)
+        # 替换第一个 was (范围 [4:7])
+        repeat_finding = Finding(
+            source="harper",
+            category="grammar",
+            message="Repetition",
+            original="was",
+            replacement="issue",
+            start=4,
+            end=7,
+        )
+        res = BackgroundCorrectionEngine.apply_correction_to_target(repeat_target, repeat_finding)
+        self.assertTrue(res)
+
     def test_deletion(self):
         """测试删除 (replacement 为空字符串)"""
         text = "Hello beautiful world"
