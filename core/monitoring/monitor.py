@@ -27,6 +27,8 @@ class MonitorState:
     timestamp: float = field(default_factory=time.time)
     app_name: str = ""
     control_info: str = ""
+    control_id: str = ""
+    control_type: str = ""
     error_message: Optional[str] = None
 
 
@@ -53,6 +55,7 @@ class LiveTextMonitor:
 
         self._current_generation = 0
         self._last_captured_text = ""
+        self._last_control_id = ""
         self._last_change_time = 0.0
         self._is_running = False
         self._monitor_thread: Optional[threading.Thread] = None
@@ -98,6 +101,8 @@ class LiveTextMonitor:
                 timestamp=self._state.timestamp,
                 app_name=self._state.app_name,
                 control_info=self._state.control_info,
+                control_id=self._state.control_id,
+                control_type=self._state.control_type,
                 error_message=self._state.error_message,
             )
 
@@ -126,22 +131,28 @@ class LiveTextMonitor:
                 self._state.error_message = str(e)
             return self.get_state()
 
-        if snapshot.status == "unsupported":
+        if snapshot.status == "unsupported" or not snapshot.is_editable:
             with self._lock:
                 self._state.status = "unsupported"
                 self._state.app_name = snapshot.app_name
                 self._state.control_info = snapshot.control_info
-                self._state.error_message = snapshot.error_message
+                self._state.control_id = snapshot.control_id
+                self._state.control_type = snapshot.control_type
+                self._state.error_message = snapshot.error_message or "Control is unsupported or not editable."
+                self._state.findings = []
             return self.get_state()
 
+        current_control_id = snapshot.control_id
         current_text = snapshot.text
         now = time.time()
 
         with self._lock:
-            text_changed = (current_text != self._last_captured_text)
+            control_changed = (current_control_id != self._last_control_id)
+            text_changed = (current_text != self._last_captured_text) or control_changed
 
-            if text_changed:
-                # 文本发生变化：递增 generation，重置防抖计时器
+            if control_changed:
+                # 聚焦控件发生变化（切换应用/控件）：立即隔离并重置状态，防止混淆不同控件的文本
+                self._last_control_id = current_control_id
                 self._current_generation += 1
                 self._last_captured_text = current_text
                 self._last_change_time = now
@@ -150,8 +161,26 @@ class LiveTextMonitor:
                 self._state.text = current_text
                 self._state.app_name = snapshot.app_name
                 self._state.control_info = snapshot.control_info
+                self._state.control_id = current_control_id
+                self._state.control_type = snapshot.control_type
+                self._state.findings = []  # 隔离：切换控件时清空旧 findings
                 self._state.timestamp = now
-                logger.debug(f"Text changed. New generation: {self._current_generation}")
+                logger.debug(f"Control changed to {current_control_id}. New generation: {self._current_generation}")
+                return self.get_state()
+
+            if text_changed:
+                self._current_generation += 1
+                self._last_captured_text = current_text
+                self._last_change_time = now
+                self._state.status = "waiting"
+                self._state.generation = self._current_generation
+                self._state.text = current_text
+                self._state.app_name = snapshot.app_name
+                self._state.control_info = snapshot.control_info
+                self._state.control_id = current_control_id
+                self._state.control_type = snapshot.control_type
+                self._state.timestamp = now
+                logger.debug(f"Text changed in control {current_control_id}. New generation: {self._current_generation}")
                 return self.get_state()
 
             # 文本未变：检查防抖期是否已过
