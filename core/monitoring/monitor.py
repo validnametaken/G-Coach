@@ -156,7 +156,6 @@ class LiveTextMonitor:
                 self._current_generation += 1
                 self._last_captured_text = current_text
                 self._last_change_time = now
-                self._state.status = "waiting"
                 self._state.generation = self._current_generation
                 self._state.text = current_text
                 self._state.app_name = snapshot.app_name
@@ -165,6 +164,10 @@ class LiveTextMonitor:
                 self._state.control_type = snapshot.control_type
                 self._state.findings = []  # 隔离：切换控件时清空旧 findings
                 self._state.timestamp = now
+                if not current_text.strip():
+                    self._state.status = "ready"
+                else:
+                    self._state.status = "waiting"
                 logger.debug(f"Control changed to {current_control_id}. New generation: {self._current_generation}")
                 return self.get_state()
 
@@ -172,7 +175,6 @@ class LiveTextMonitor:
                 self._current_generation += 1
                 self._last_captured_text = current_text
                 self._last_change_time = now
-                self._state.status = "waiting"
                 self._state.generation = self._current_generation
                 self._state.text = current_text
                 self._state.app_name = snapshot.app_name
@@ -180,6 +182,11 @@ class LiveTextMonitor:
                 self._state.control_id = current_control_id
                 self._state.control_type = snapshot.control_type
                 self._state.timestamp = now
+                if not current_text.strip():
+                    self._state.status = "ready"
+                    self._state.findings = []  # 空文本立即清空 findings
+                else:
+                    self._state.status = "waiting"
                 logger.debug(f"Text changed in control {current_control_id}. New generation: {self._current_generation}")
                 return self.get_state()
 

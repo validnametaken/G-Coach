@@ -237,6 +237,37 @@ class TestLiveTextMonitor(unittest.TestCase):
         finally:
             monitor.stop()
 
+    def test_empty_text_clears_findings(self):
+        """测试当文本变为空时，不触发多余分析并立即清除旧 findings"""
+        self.text_source.set_text("This has error text")
+        self.monitor.start()
+        try:
+            self.monitor.trigger_check()
+            time.sleep(0.12)
+            state1 = self.monitor.get_state()
+            self.assertEqual(len(state1.findings), 1)
+
+            # 文本变为空
+            self.text_source.set_text("")
+            state_empty = self.monitor.trigger_check()
+            self.assertEqual(state_empty.status, "ready")
+            self.assertEqual(state_empty.text, "")
+            self.assertEqual(state_empty.findings, [])
+        finally:
+            self.monitor.stop()
+
+    def test_non_editable_control_ignored(self):
+        """测试不可编辑控件不触发分析且保持监控状态"""
+        readonly_source = MockTextSource(initial_text="some text", is_editable=False, status="unsupported")
+        monitor = LiveTextMonitor(
+            text_source=readonly_source,
+            pipeline=self.pipeline,
+            resolver=self.resolver,
+        )
+        state = monitor.trigger_check()
+        self.assertEqual(state.status, "unsupported")
+        self.assertEqual(state.findings, [])
+
 
 if __name__ == "__main__":
     unittest.main()
