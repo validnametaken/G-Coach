@@ -142,6 +142,12 @@ class TestUIPresenter(unittest.TestCase):
         monitor.stop()
         self.assertFalse(monitor._is_running)
 
+    def test_qmessagebox_imported_in_window(self):
+        """测试 window 模块中已成功导入 QMessageBox，防止 NameError 回归"""
+        from core.ui.window import GCoachWindow
+        import core.ui.window as window_module
+        self.assertTrue(hasattr(window_module, "QMessageBox"))
+
 
 if __name__ == "__main__":
     unittest.main()
