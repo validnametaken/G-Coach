@@ -35,6 +35,7 @@ except (ImportError, OSError) as e:
 
 from core.monitoring import LiveTextMonitor, MonitorState
 from core.analysis import Finding
+from core.correction import CorrectionController
 from .presenter import UIPresenter
 
 
@@ -47,6 +48,7 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
         super().__init__()
         self.monitor = monitor
         self.current_findings: List[Finding] = []
+        self.correction_controller = CorrectionController()
 
         self.setWindowTitle("G-Coach - Personal Writing Assistant")
         self.resize(900, 700)
@@ -138,6 +140,20 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
         self.details_text_edit.setPlaceholderText("Select a finding on the left to inspect details, metadata, confidence, or multi-engine conflicts.")
         details_layout.addWidget(self.details_text_edit)
 
+        # Phase 7: Interactive Correction Actions (Accept / Ignore)
+        actions_layout = QHBoxLayout()
+        self.btn_accept = QPushButton("Accept Correction", self)
+        self.btn_accept.setEnabled(False)
+        self.btn_accept.clicked.connect(self._on_accept_clicked)
+        actions_layout.addWidget(self.btn_accept)
+
+        self.btn_ignore = QPushButton("Ignore Finding", self)
+        self.btn_ignore.setEnabled(False)
+        self.btn_ignore.clicked.connect(self._on_ignore_clicked)
+        actions_layout.addWidget(self.btn_ignore)
+
+        details_layout.addLayout(actions_layout)
+
         right_layout.addWidget(details_group)
         splitter.addWidget(right_widget)
 
@@ -221,7 +237,12 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
         selected_items = self.findings_list_widget.selectedItems()
         if not selected_items:
             self.details_text_edit.clear()
+            self.btn_accept.setEnabled(False)
+            self.btn_ignore.setEnabled(False)
             return
+
+        self.btn_accept.setEnabled(True)
+        self.btn_ignore.setEnabled(True)
 
         item = selected_items[0]
         finding: Finding = item.data(Qt.ItemDataRole.UserRole)
@@ -248,6 +269,58 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
             details_str += "\n(Note: G-Coach presents alternative suggestions without selecting a winner.)"
 
         self.details_text_edit.setPlainText(details_str)
+
+    def _on_accept_clicked(self):
+        """用户点击接受修正按钮"""
+        selected_items = self.findings_list_widget.selectedItems()
+        if not selected_items:
+            return
+        item = selected_items[0]
+        finding: Finding = item.data(Qt.ItemDataRole.UserRole)
+        if not finding:
+            return
+
+        current_text = self.text_snapshot_edit.toPlainText()
+        result = self.correction_controller.apply_acceptance(
+            current_text, finding, all_findings=self.current_findings
+        )
+
+        if result.success:
+            self.statusBar().showMessage(result.message)
+            if hasattr(self.monitor.text_source, "set_text"):
+                self.monitor.text_source.set_text(result.new_text)
+                self.monitor.trigger_check()
+            else:
+                self.text_snapshot_edit.setPlainText(result.new_text)
+            
+            # 移除已接受的项
+            row = self.findings_list_widget.row(item)
+            self.findings_list_widget.takeItem(row)
+            self.details_text_edit.clear()
+            self.btn_accept.setEnabled(False)
+            self.btn_ignore.setEnabled(False)
+        else:
+            QMessageBox.warning(self, "Correction Failed", result.error_message or "Could not apply correction.")
+            self.statusBar().showMessage(f"Correction failed: {result.error_message}")
+
+    def _on_ignore_clicked(self):
+        """用户点击忽略/丢弃 Finding 按钮"""
+        selected_items = self.findings_list_widget.selectedItems()
+        if not selected_items:
+            return
+        item = selected_items[0]
+        finding: Finding = item.data(Qt.ItemDataRole.UserRole)
+        if not finding:
+            return
+
+        self.correction_controller.mark_ignored(finding)
+        self.statusBar().showMessage(f"Finding ignored: {finding.original} → {finding.replacement}")
+        
+        row = self.findings_list_widget.row(item)
+        self.findings_list_widget.takeItem(row)
+        self.details_text_edit.clear()
+        self.btn_accept.setEnabled(False)
+        self.btn_ignore.setEnabled(False)
 
     def closeEvent(self, event):
         """窗口关闭时确保监控器和后台线程干净停止"""
