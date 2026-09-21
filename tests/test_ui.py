@@ -149,7 +149,7 @@ class TestUIPresenter(unittest.TestCase):
         self.assertTrue(hasattr(window_module, "QMessageBox"))
 
     def test_phase_8e_popup_integration_logic(self):
-        """测试 Phase 8E 浮动纠正弹窗与 GCoachWindow 的集成逻辑"""
+        """测试 Phase 8E 浮动纠正弹窗与 GCoachWindow 的集成逻辑（确定性轮询同步）"""
         from core.ui.window import PYQT_AVAILABLE
         if not PYQT_AVAILABLE:
             return
@@ -157,7 +157,6 @@ class TestUIPresenter(unittest.TestCase):
         from core.analysis import AnalysisPipeline, AnalysisResolver, HarperAnalysisEngine
         from core.monitoring import MockTextSource, LiveTextMonitor
         from core.ui.window import GCoachWindow
-        from core.ui.floating_correction import FloatingCorrectionPopup
         from PyQt6.QtWidgets import QApplication
 
         # 确保 QApplication 存在
@@ -179,20 +178,21 @@ class TestUIPresenter(unittest.TestCase):
 
         window = GCoachWindow(monitor)
         try:
-            # 触发一次检查
             monitor.start()
             import time
-            time.sleep(0.06)
-            window._poll_monitor_state()
-            # 再次轮询以确保在分析完成后从 waiting/analyzing 切换到 ready 状态并产出 findings
-            time.sleep(0.06)
-            window._poll_monitor_state()
+            start_time = time.time()
+            # 确定性同步等待直到 monitor 状态变为 ready 且包含 findings，或超时 (2.0s)
+            while time.time() - start_time < 2.0:
+                window._poll_monitor_state()
+                if window.monitor.get_state().status == "ready" and window.current_findings:
+                    break
+                time.sleep(0.05)
 
             # 验证 findings 出现时弹窗是否被正确同步创建
             self.assertIsNotNone(window.active_popup)
             self.assertEqual(window.last_popup_finding_id, window.current_findings[0].id)
 
-            # 验证点击 Ignore/Accept 可以关闭弹窗
+            # 验证点击 Ignore 可以关闭弹窗
             finding = window.current_findings[0]
             window._handle_popup_ignore(finding)
             self.assertIsNone(window.active_popup)
