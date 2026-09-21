@@ -219,6 +219,14 @@ class TestUIPresenter(unittest.TestCase):
                 self.assertTrue(window.active_popup.closed)
                 self.assertIsNone(window.active_popup)
                 self.assertIsNone(window.last_popup_finding_id)
+
+                # 回归测试：验证当 last_popup_finding_id 等于 finding.id 但 active_popup 为 None 时，_sync_floating_popup 会重新创建弹窗
+                window.last_popup_finding_id = finding.id
+                window.active_popup = None
+                state = monitor.get_state()
+                window._sync_floating_popup([finding], state)
+                self.assertIsNotNone(window.active_popup)
+                self.assertIsInstance(window.active_popup, MockPopup)
         finally:
             window.close()
             monitor.stop()
