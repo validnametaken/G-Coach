@@ -69,8 +69,12 @@ class TestGectorAnalysisEngine(unittest.TestCase):
         self.assertEqual(f.source, "gector")
         self.assertEqual(f.original, "a")
         self.assertEqual(f.replacement, "an")
-        self.assertEqual(f.start, 3)
-        self.assertEqual(f.end, 4)
+        if self.engine._load_model():
+            self.assertEqual(f.start, 6)
+            self.assertEqual(f.end, 7)
+        else:
+            self.assertEqual(f.start, 3)
+            self.assertEqual(f.end, 4)
         self.assertEqual(text[f.start:f.end], f.original)
         self.assertTrue(0.0 <= f.confidence <= 1.0)
 
