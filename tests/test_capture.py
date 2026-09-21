@@ -100,6 +100,41 @@ class TestTextCapture(unittest.TestCase):
             self.assertEqual(snapshot.status, "unsupported")
             self.assertIsNotNone(snapshot.error_message)
 
+    def test_phase_8d_multi_application_robustness_mock(self):
+        """测试 Phase 8D 多应用混淆与健壮性验证（通过多控件 Mock 源模拟 Telegram、ChatGPT、Firefox 搜索/地址栏切换）"""
+        controls = [
+            {"control_id": "pid:101-hwnd:111-autoid:tg-type:EditControl-name:Write a message...", "app_name": "telegram.exe", "text": "The students was very happy.", "is_editable": True},
+            {"control_id": "pid:102-hwnd:222-autoid:gpt-type:EditControl-name:Chat with ChatGPT", "app_name": "firefox.exe", "text": "She go to school.", "is_editable": True},
+            {"control_id": "pid:102-hwnd:222-autoid:ff-search-type:EditControl-name:searchbar", "app_name": "firefox.exe", "text": "She go to school.", "is_editable": True},
+            {"control_id": "pid:102-hwnd:222-autoid:ff-url-type:ComboBoxControl-name:urlbar-input", "app_name": "firefox.exe", "control_type": "ComboBoxControl", "text": "https://example.com", "is_editable": True},
+        ]
+        source = MultiControlMockTextSource(controls)
+        
+        # 依次检查各项应用与控件的识别和隔离
+        # 1. Telegram
+        snap = source.get_current_text()
+        self.assertEqual(snap.app_name, "telegram.exe")
+        self.assertTrue(snap.is_editable)
+        self.assertEqual(snap.text, "The students was very happy.")
+
+        # 2. ChatGPT
+        source.select_control(1)
+        snap = source.get_current_text()
+        self.assertEqual(snap.app_name, "firefox.exe")
+        self.assertEqual(snap.control_id, "pid:102-hwnd:222-autoid:gpt-type:EditControl-name:Chat with ChatGPT")
+        self.assertEqual(snap.text, "She go to school.")
+
+        # 3. Firefox Search
+        source.select_control(2)
+        snap = source.get_current_text()
+        self.assertEqual(snap.control_id, "pid:102-hwnd:222-autoid:ff-search-type:EditControl-name:searchbar")
+
+        # 4. Firefox URL Bar (ComboBox)
+        source.select_control(3)
+        snap = source.get_current_text()
+        self.assertEqual(snap.control_type, "ComboBoxControl")
+        self.assertEqual(snap.text, "https://example.com")
+
 
 if __name__ == "__main__":
     unittest.main()
