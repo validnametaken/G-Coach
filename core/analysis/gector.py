@@ -224,6 +224,14 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
         seq_len = min(len(encoding.ids), prob_d.shape[0], prob_l.shape[0], len(offsets))
 
         for i in range(seq_len):
+            # 严格确保每次迭代重置所有 token 状态，防止变量在上一次循环中泄漏
+            replacement = ""
+            category = "grammar"
+            message = "Grammatical correction suggested by GECToR."
+            det_prob = 0.0
+            lab_prob = 0.0
+            label_str = "$KEEP"
+
             start_char, end_char = offsets[i]
             if start_char == end_char:
                 continue
@@ -245,10 +253,6 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
 
             # 获取检测概率（若有 2 类检测头，索引 1 代表 INCORRECT 概率）
             det_prob = float(prob_d[i][1]) if prob_d.shape[-1] > 1 else float(np.max(prob_d[i]))
-
-            replacement = ""
-            category = "grammar"
-            message = "Grammatical correction suggested by GECToR."
 
             if label_str == "$DELETE":
                 replacement = ""
@@ -430,6 +434,8 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
         elif tgt in ["PAST", "VBD"]:
             if base_form == "go":
                 return "went"
+            elif base_form == "eat":
+                return "ate"
             elif base_form == "be":
                 return "was"
             elif base_form == "have":
@@ -530,6 +536,35 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
                     "det_prob": 0.96,
                     "lab_prob": 0.98,
                     "label": "$REPLACE_go",
+                }
+            ],
+            "She go to school and eat a apple": [
+                {
+                    "original": "go",
+                    "replacement": "goes",
+                    "category": "subject_verb_agreement",
+                    "message": "Use third-person singular present form.",
+                    "det_prob": 0.95,
+                    "lab_prob": 0.98,
+                    "label": "$REPLACE_goes",
+                },
+                {
+                    "original": "eat",
+                    "replacement": "ate",
+                    "category": "verb_form",
+                    "message": "Verb form transformation: change 'eat' to 'ate'.",
+                    "det_prob": 0.75,
+                    "lab_prob": 0.94,
+                    "label": "$TRANSFORM_VERB_VB_VBD",
+                },
+                {
+                    "original": "a",
+                    "replacement": "an",
+                    "category": "article",
+                    "message": "Use 'an' before vowels.",
+                    "det_prob": 0.90,
+                    "lab_prob": 0.94,
+                    "label": "$REPLACE_an",
                 }
             ]
         }
