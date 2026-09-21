@@ -26,12 +26,14 @@ try:
         QListWidgetItem,
         QSplitter,
         QGroupBox,
+        QMessageBox,
     )
     PYQT_AVAILABLE = True
 except (ImportError, OSError) as e:
     logger.warning(f"PyQt6 or system GUI libraries (e.g. libEGL) not available: {e}. GUI window disabled.")
     PYQT_AVAILABLE = False
     QMainWindow = object  # type: ignore
+    QMessageBox = object  # type: ignore
 
 from core.monitoring import LiveTextMonitor, MonitorState
 from core.analysis import Finding
