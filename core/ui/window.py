@@ -38,6 +38,9 @@ except (ImportError, OSError) as e:
 from core.monitoring import LiveTextMonitor, MonitorState
 from core.analysis import Finding
 from core.correction import CorrectionController
+from core.correction.target import CorrectionTarget
+from core.correction.engine import BackgroundCorrectionEngine
+from .floating_correction import FloatingCorrectionPopup
 from .presenter import UIPresenter
 
 
@@ -51,6 +54,8 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
         self.monitor = monitor
         self.current_findings: List[Finding] = []
         self.correction_controller = CorrectionController()
+        self.active_popup: Optional[FloatingCorrectionPopup] = None
+        self.last_popup_finding_id: Optional[str] = None
 
         self.setWindowTitle("G-Coach - Personal Writing Assistant")
         self.resize(900, 700)
@@ -234,6 +239,9 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
             else:
                 self.statusBar().showMessage(f"Found {len(new_findings)} findings (Ready).")
 
+            # Phase 8E: 管理和同步浮动纠正弹窗 (Floating Correction Popup)
+            self._sync_floating_popup(new_findings, state)
+
     def _on_finding_selected(self):
         """当用户在列表中选择某条 Finding 时展示其详情与冲突分析"""
         selected_items = self.findings_list_widget.selectedItems()
@@ -315,14 +323,71 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
         if not finding:
             return
 
+        self._handle_popup_ignore(finding)
+
+    def _sync_floating_popup(self, findings: List[Finding], state: MonitorState):
+        """根据当前 findings 和 monitor state 同步浮动纠正弹窗的显示与隐藏"""
+        if not findings:
+            if self.active_popup:
+                self.active_popup.close()
+                self.active_popup = None
+                self.last_popup_finding_id = None
+            return
+
+        # 选择第一个高优 finding 进行悬浮展示
+        active_finding = findings[0]
+
+        # 如果 finding 发生变化，更新或重建弹窗
+        if self.last_popup_finding_id != active_finding.id:
+            if self.active_popup:
+                self.active_popup.close()
+                self.active_popup = None
+
+            target = CorrectionTarget.from_snapshot(state)
+            self.active_popup = FloatingCorrectionPopup(
+                finding=active_finding,
+                target=target,
+                on_accept=self._handle_popup_accept,
+                on_ignore=self._handle_popup_ignore,
+            )
+            self.last_popup_finding_id = active_finding.id
+
+            # 计算弹窗显示坐标（定位在主窗口附近或屏幕合适位置，未来可集成 UIA 范围矩形）
+            # 获取主窗口右侧或下方作为默认优雅位置，避免遮挡正文
+            main_pos = self.pos()
+            popup_x = main_pos.x() + self.width() + 20
+            popup_y = main_pos.y() + 150
+            self.active_popup.show_at(popup_x, popup_y)
+
+    def _handle_popup_accept(self, finding: Finding, target: CorrectionTarget):
+        """处理浮动弹窗的 Accept 点击：通过 BackgroundCorrectionEngine 无焦点直接修改目标控件"""
+        success = BackgroundCorrectionEngine.apply_correction_to_target(target, finding)
+        if success:
+            self.statusBar().showMessage(f"Successfully applied background correction: {finding.original} → {finding.replacement}")
+            finding.status = "accepted"
+            if hasattr(self.monitor.text_source, "set_text"):
+                # 如果是 Mock Text Source，同时更新其内部文本并触发检查
+                current_t = getattr(self.monitor.text_source, "text", "")
+                if current_t:
+                    new_t = current_t[:finding.start] + finding.replacement + current_t[finding.end:]
+                    self.monitor.text_source.set_text(new_t)
+                    self.monitor.trigger_check()
+        else:
+            self.statusBar().showMessage(f"Background correction failed for finding '{finding.original}'.")
+
+        if self.active_popup:
+            self.active_popup.close()
+            self.active_popup = None
+            self.last_popup_finding_id = None
+
+    def _handle_popup_ignore(self, finding: Finding):
+        """处理浮动弹窗的 Ignore 点击"""
         self.correction_controller.mark_ignored(finding)
         self.statusBar().showMessage(f"Finding ignored: {finding.original} → {finding.replacement}")
-        
-        row = self.findings_list_widget.row(item)
-        self.findings_list_widget.takeItem(row)
-        self.details_text_edit.clear()
-        self.btn_accept.setEnabled(False)
-        self.btn_ignore.setEnabled(False)
+        if self.active_popup:
+            self.active_popup.close()
+            self.active_popup = None
+            self.last_popup_finding_id = None
 
     def closeEvent(self, event):
         """窗口关闭时确保监控器和后台线程干净停止"""

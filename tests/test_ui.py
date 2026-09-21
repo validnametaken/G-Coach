@@ -148,6 +148,56 @@ class TestUIPresenter(unittest.TestCase):
         import core.ui.window as window_module
         self.assertTrue(hasattr(window_module, "QMessageBox"))
 
+    def test_phase_8e_popup_integration_logic(self):
+        """测试 Phase 8E 浮动纠正弹窗与 GCoachWindow 的集成逻辑"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.analysis import AnalysisPipeline, AnalysisResolver, HarperAnalysisEngine
+        from core.monitoring import MockTextSource, LiveTextMonitor
+        from core.ui.window import GCoachWindow
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from PyQt6.QtWidgets import QApplication
+
+        # 确保 QApplication 存在
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        pipeline = AnalysisPipeline()
+        pipeline.register_engine(HarperAnalysisEngine())
+        resolver = AnalysisResolver()
+        text_source = MockTextSource(initial_text="The students was very happy.")
+        monitor = LiveTextMonitor(
+            text_source=text_source,
+            pipeline=pipeline,
+            resolver=resolver,
+            debounce_interval=0.01,
+            poll_interval=0.01,
+        )
+
+        window = GCoachWindow(monitor)
+        try:
+            # 触发一次检查
+            monitor.start()
+            import time
+            time.sleep(0.08)
+            window._poll_monitor_state()
+
+            # 验证 findings 出现时弹窗是否被正确同步创建
+            self.assertIsNotNone(window.active_popup)
+            self.assertEqual(window.last_popup_finding_id, window.current_findings[0].id)
+
+            # 验证点击 Ignore/Accept 可以关闭弹窗
+            finding = window.current_findings[0]
+            window._handle_popup_ignore(finding)
+            self.assertIsNone(window.active_popup)
+            self.assertIsNone(window.last_popup_finding_id)
+        finally:
+            window.close()
+            monitor.stop()
+
 
 if __name__ == "__main__":
     unittest.main()

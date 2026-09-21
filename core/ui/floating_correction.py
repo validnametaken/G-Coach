@@ -6,7 +6,7 @@ G-Coach Floating Correction Popup (PyQt6) - Phase 8E
 
 import logging
 import platform
-from typing import Optional, Callable
+from typing import Optional, Callable, Any
 
 logger = logging.getLogger(__name__)
 
