@@ -227,8 +227,12 @@ class TestUIPresenter(unittest.TestCase):
 
                 # 验证 Accept / Ignore 回调与清理逻辑
                 finding = window.current_findings[0]
+                popup = window.active_popup
+                self.assertIsNotNone(popup)
+
                 window._handle_popup_ignore(finding)
-                self.assertTrue(window.active_popup.closed)
+
+                self.assertTrue(popup.closed)
                 self.assertIsNone(window.active_popup)
                 self.assertIsNone(window.last_popup_finding_id)
 
