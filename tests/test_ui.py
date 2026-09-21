@@ -182,7 +182,10 @@ class TestUIPresenter(unittest.TestCase):
             # 触发一次检查
             monitor.start()
             import time
-            time.sleep(0.08)
+            time.sleep(0.06)
+            window._poll_monitor_state()
+            # 再次轮询以确保在分析完成后从 waiting/analyzing 切换到 ready 状态并产出 findings
+            time.sleep(0.06)
             window._poll_monitor_state()
 
             # 验证 findings 出现时弹窗是否被正确同步创建
