@@ -149,11 +149,12 @@ class TestUIPresenter(unittest.TestCase):
         self.assertTrue(hasattr(window_module, "QMessageBox"))
 
     def test_phase_8e_popup_integration_logic(self):
-        """测试 Phase 8E 浮动纠正弹窗与 GCoachWindow 的集成逻辑（确定性轮询同步）"""
+        """测试 Phase 8E 浮动纠正弹窗与 GCoachWindow 的集成逻辑（通过 Mock 隔离 Win32 无焦点窗口创建）"""
         from core.ui.window import PYQT_AVAILABLE
         if not PYQT_AVAILABLE:
             return
 
+        from unittest.mock import patch, MagicMock
         from core.analysis import AnalysisPipeline, AnalysisResolver, HarperAnalysisEngine
         from core.monitoring import MockTextSource, LiveTextMonitor
         from core.ui.window import GCoachWindow
@@ -176,27 +177,48 @@ class TestUIPresenter(unittest.TestCase):
             poll_interval=0.01,
         )
 
+        # 构建符合生产接口的 Mock Popup
+        class MockPopup:
+            def __init__(self, finding, target, on_accept, on_ignore, parent=None):
+                self.finding = finding
+                self.target = target
+                self.on_accept = on_accept
+                self.on_ignore = on_ignore
+                self.shown_x = 0
+                self.shown_y = 0
+                self.closed = False
+
+            def show_at(self, x: int, y: int):
+                self.shown_x = x
+                self.shown_y = y
+
+            def close(self):
+                self.closed = True
+
         window = GCoachWindow(monitor)
         try:
-            monitor.start()
-            import time
-            start_time = time.time()
-            # 确定性同步等待直到 monitor 状态变为 ready 且包含 findings，或超时 (2.0s)
-            while time.time() - start_time < 2.0:
-                window._poll_monitor_state()
-                if window.monitor.get_state().status == "ready" and window.current_findings:
-                    break
-                time.sleep(0.05)
+            with patch("core.ui.window.FloatingCorrectionPopup", MockPopup):
+                monitor.start()
+                import time
+                start_time = time.time()
+                while time.time() - start_time < 2.0:
+                    window._poll_monitor_state()
+                    if window.monitor.get_state().status == "ready" and window.current_findings:
+                        break
+                    time.sleep(0.05)
 
-            # 验证 findings 出现时弹窗是否被正确同步创建
-            self.assertIsNotNone(window.active_popup)
-            self.assertEqual(window.last_popup_finding_id, window.current_findings[0].id)
+                # 验证 findings 出现时弹窗是否被正确同步创建并配置
+                self.assertIsNotNone(window.active_popup)
+                self.assertIsInstance(window.active_popup, MockPopup)
+                self.assertEqual(window.last_popup_finding_id, window.current_findings[0].id)
+                self.assertEqual(window.active_popup.finding.original, window.current_findings[0].original)
 
-            # 验证点击 Ignore 可以关闭弹窗
-            finding = window.current_findings[0]
-            window._handle_popup_ignore(finding)
-            self.assertIsNone(window.active_popup)
-            self.assertIsNone(window.last_popup_finding_id)
+                # 验证 Accept / Ignore 回调与清理逻辑
+                finding = window.current_findings[0]
+                window._handle_popup_ignore(finding)
+                self.assertTrue(window.active_popup.closed)
+                self.assertIsNone(window.active_popup)
+                self.assertIsNone(window.last_popup_finding_id)
         finally:
             window.close()
             monitor.stop()
