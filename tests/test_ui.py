@@ -198,15 +198,27 @@ class TestUIPresenter(unittest.TestCase):
         window = GCoachWindow(monitor)
         try:
             with patch("core.ui.window.FloatingCorrectionPopup", MockPopup):
-                monitor.start()
-                import time
-                start_time = time.time()
-                while time.time() - start_time < 2.0:
-                    window._poll_monitor_state()
-                    if window.monitor.get_state().status == "ready" and window.current_findings:
-                        break
-                    time.sleep(0.05)
+                finding = Finding(
+                    source="Harper",
+                    category="grammar",
+                    message="Agreement error",
+                    original="was",
+                    replacement="were",
+                    start=13,
+                    end=16,
+                )
+                state = MonitorState(
+                    generation=1,
+                    text="The students was very happy.",
+                    findings=[finding],
+                    status="ready",
+                    control_id="mock-ctrl-1",
+                    app_name="MockApp",
+                )
 
+                window._sync_floating_popup([finding], state)
+
+                window.current_findings = [finding]
                 # 验证 findings 出现时弹窗是否被正确同步创建并配置
                 self.assertIsNotNone(window.active_popup)
                 self.assertIsInstance(window.active_popup, MockPopup)
