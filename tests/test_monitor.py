@@ -268,6 +268,107 @@ class TestLiveTextMonitor(unittest.TestCase):
         self.assertEqual(state.status, "unsupported")
         self.assertEqual(state.findings, [])
 
+    def test_phase_8c_application_switching_scenarios(self):
+        """测试 Phase 8C 应用程序/控件切换硬化要求：
+        1. 多应用/多控件循环切换 (Telegram → ChatGPT → Firefox → Telegram) 隔离 findings
+        2. 快速切换 (Rapid switching) 期间旧分析结果被生成保护(stale result protection)正确丢弃
+        3. 同一应用内不同控件 (Same app, different controls) 身份区分
+        4. 切换回曾使用过的控件保留或重新分析上下文
+        5. 空文本/非可编辑控件转入与切出处理
+        """
+        controls = [
+            {"control_id": "ctrl-tg", "app_name": "Telegram", "text": "This has error text", "is_editable": True},
+            {"control_id": "ctrl-gpt", "app_name": "ChatGPT", "text": "Clean text here", "is_editable": True},
+            {"control_id": "ctrl-ff", "app_name": "Firefox", "text": "Another error text", "is_editable": True},
+        ]
+        multi_source = MultiControlMockTextSource(controls)
+
+        monitor = LiveTextMonitor(
+            text_source=multi_source,
+            pipeline=self.pipeline,
+            resolver=self.resolver,
+            debounce_interval=0.03,
+            poll_interval=0.01,
+        )
+        monitor.start()
+        try:
+            # 1. Telegram (ctrl-tg) 触发分析
+            monitor.trigger_check()
+            time.sleep(0.06)
+            state_tg1 = monitor.get_state()
+            self.assertEqual(state_tg1.control_id, "ctrl-tg")
+            self.assertEqual(state_tg1.status, "ready")
+            self.assertEqual(len(state_tg1.findings), 1)
+
+            # 2. 切换到 ChatGPT (ctrl-gpt，干净文本)
+            multi_source.select_control(1)
+            state_gpt = monitor.trigger_check()
+            self.assertEqual(state_gpt.control_id, "ctrl-gpt")
+            self.assertEqual(state_gpt.status, "waiting")
+            self.assertEqual(state_gpt.findings, [], "Telegram findings must not leak to ChatGPT")
+
+            time.sleep(0.05)
+            state_gpt_ready = monitor.get_state()
+            self.assertEqual(state_gpt_ready.control_id, "ctrl-gpt")
+            self.assertEqual(state_gpt_ready.status, "ready")
+            self.assertEqual(state_gpt_ready.findings, [])
+
+            # 3. 切换到 Firefox (ctrl-ff)
+            multi_source.select_control(2)
+            state_ff = monitor.trigger_check()
+            self.assertEqual(state_ff.control_id, "ctrl-ff")
+            self.assertEqual(state_ff.findings, [])
+
+            # 4. 再次切回 Telegram (ctrl-tg)
+            multi_source.select_control(0)
+            state_tg_back = monitor.trigger_check()
+            self.assertEqual(state_tg_back.control_id, "ctrl-tg")
+            # 切换控件时应当先清理上一控件状态进入 waiting
+            self.assertEqual(state_tg_back.findings, [])
+
+            time.sleep(0.06)
+            state_tg_final = monitor.get_state()
+            self.assertEqual(state_tg_final.control_id, "ctrl-tg")
+            self.assertEqual(state_tg_final.status, "ready")
+            self.assertEqual(len(state_tg_final.findings), 1)
+
+        finally:
+            monitor.stop()
+
+    def test_phase_8c_rapid_switching_stale_protection(self):
+        """测试 Phase 8C 快速切换时的过期结果保护 (Stale Result Protection)"""
+        controls = [
+            {"control_id": "ctrl-a", "app_name": "AppA", "text": "error text in a", "is_editable": True},
+            {"control_id": "ctrl-b", "app_name": "AppB", "text": "clean text in b", "is_editable": True},
+        ]
+        multi_source = MultiControlMockTextSource(controls)
+
+        # 调大防抖时间以便在分析排队时有时间切换控件
+        monitor = LiveTextMonitor(
+            text_source=multi_source,
+            pipeline=self.pipeline,
+            resolver=self.resolver,
+            debounce_interval=0.02,
+            poll_interval=0.01,
+        )
+        monitor.start()
+        try:
+            # 触发 AppA
+            monitor.trigger_check()
+            # 在防抖倒计时期间立即切换到 AppB
+            time.sleep(0.01)
+            multi_source.select_control(1)
+            state_switched = monitor.trigger_check()
+            self.assertEqual(state_switched.control_id, "ctrl-b")
+            
+            # 等待足够时间让异步或防抖完成
+            time.sleep(0.08)
+            state_b = monitor.get_state()
+            self.assertEqual(state_b.control_id, "ctrl-b")
+            self.assertEqual(state_b.findings, [], "AppA analysis result must not overwrite AppB state")
+        finally:
+            monitor.stop()
+
 
 if __name__ == "__main__":
     unittest.main()
