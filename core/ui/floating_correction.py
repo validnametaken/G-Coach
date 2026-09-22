@@ -60,15 +60,32 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
 
-        # 在 Windows 平台上应用 WS_EX_NOACTIVATE (0x08000000) 扩展样式
+        # 在 Windows 平台上应用 WS_EX_NOACTIVATE (0x08000000) 扩展样式（安全使用 GetWindowLongPtrW / SetWindowLongPtrW 及显式 ctypes 签名）
         if platform.system() == "Windows":
             try:
                 import ctypes
                 hwnd = int(self.winId())
-                ex_style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE = -20
-                ctypes.windll.user32.SetWindowLongW(hwnd, -20, ex_style | 0x08000000)  # WS_EX_NOACTIVATE
+                if hwnd:
+                    user32 = ctypes.windll.user32
+
+                    # 配置 GetWindowLongPtrW 签名
+                    get_window_long_ptr = user32.GetWindowLongPtrW
+                    get_window_long_ptr.argtypes = [ctypes.c_void_p, ctypes.c_int]
+                    get_window_long_ptr.restype = ctypes.c_ssize_t
+
+                    # 配置 SetWindowLongPtrW 签名
+                    set_window_long_ptr = user32.SetWindowLongPtrW
+                    set_window_long_ptr.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
+                    set_window_long_ptr.restype = ctypes.c_ssize_t
+
+                    ex_style = get_window_long_ptr(hwnd, -20)  # GWL_EXSTYLE = -20
+                    if ex_style != 0 or ctypes.get_last_error() == 0:
+                        new_style = ex_style | 0x08000000  # WS_EX_NOACTIVATE
+                        res = set_window_long_ptr(hwnd, -20, new_style)
+                        if res == 0 and ctypes.get_last_error() != 0:
+                            logger.warning(f"SetWindowLongPtrW failed with error code: {ctypes.get_last_error()}")
             except Exception as e:
-                logger.debug(f"Could not apply WS_EX_NOACTIVATE style: {e}")
+                logger.warning(f"Could not apply WS_EX_NOACTIVATE style securely: {e}")
 
     def _init_ui(self):
         """初始化精简的弹窗布局"""

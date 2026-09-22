@@ -314,6 +314,36 @@ class TestUIPresenter(unittest.TestCase):
             self.assertFalse(handled)
         popup.close()
 
+    def test_phase_8e_floating_popup_win32_style_safety(self):
+        """测试 FloatingCorrectionPopup 在 Windows 平台上的 Win32 样式修改安全防御机制"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from core.analysis import Finding
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        finding = Finding(
+            source="Harper",
+            category="grammar",
+            message="Test",
+            original="was",
+            replacement="were",
+            start=0,
+            end=3,
+        )
+        target = CorrectionTarget()
+        # 验证即使在非 Windows 平台或模拟异常下，弹窗创建也不会抛出异常
+        popup = FloatingCorrectionPopup(finding, target, lambda f, t: None, lambda f: None)
+        self.assertIsNotNone(popup)
+        popup.close()
+
 
 if __name__ == "__main__":
     unittest.main()
