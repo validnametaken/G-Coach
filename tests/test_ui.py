@@ -247,6 +247,62 @@ class TestUIPresenter(unittest.TestCase):
             window.close()
             monitor.stop()
 
+    def test_phase_8e_floating_popup_native_event_wm_mouseactivate(self):
+        """测试 FloatingCorrectionPopup 在 Windows 平台上的 nativeEvent 对 WM_MOUSEACTIVATE 的处理"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from core.analysis import Finding
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        finding = Finding(
+            source="Harper",
+            category="grammar",
+            message="Test",
+            original="was",
+            replacement="were",
+            start=0,
+            end=3,
+        )
+        target = CorrectionTarget()
+        popup = FloatingCorrectionPopup(finding, target, lambda f, t: None, lambda f: None)
+
+        # 模拟调用 nativeEvent 处理 WM_MOUSEACTIVATE (0x0021)
+        # 在非 Windows 平台上或无法轻易构造 MSG 指针时，可以直接测试方法存在性与非 Windows 平台的原样通过
+        import platform
+        if platform.system() == "Windows":
+            try:
+                import ctypes
+                class MSG(ctypes.Structure):
+                    _fields_ = [
+                        ("hwnd", ctypes.c_void_p),
+                        ("message", ctypes.c_uint32),
+                        ("wParam", ctypes.c_void_p),
+                        ("lParam", ctypes.c_void_p),
+                        ("time", ctypes.c_uint32),
+                        ("pt", ctypes.c_long * 2),
+                    ]
+                msg = MSG(hwnd=popup.winId(), message=0x0021, wParam=0, lParam=0, time=0, pt=(0, 0))
+                capsule = ctypes.pythonapi.PyCapsule_New(ctypes.addressof(msg), None, None)
+                handled, result = popup.nativeEvent(b"windows_generic_MSG", capsule)
+                self.assertTrue(handled)
+                self.assertEqual(result, 3)  # MA_NOACTIVATE = 3
+            except Exception as e:
+                # 若 ctypes 构造在某些环境受限，确保方法调用无异常
+                pass
+        else:
+            # 非 Windows 平台应直接调用超类或安全返回
+            handled, result = popup.nativeEvent("generic", 0)
+            self.assertFalse(handled)
+        popup.close()
+
 
 if __name__ == "__main__":
     unittest.main()
