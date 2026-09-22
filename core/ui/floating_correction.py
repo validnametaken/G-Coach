@@ -51,17 +51,26 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
 
     def _init_window_flags(self):
         """配置窗口标志以确保悬浮、置顶且绝不抢占目标应用焦点"""
-        self.setWindowFlags(
-            Qt.WindowType.Tool
-            | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.WindowDoesNotAcceptFocus
-        )
+        import os
+        config_mode = os.environ.get("GCOACH_POPUP_TEST", "A").strip().upper()
+        if not config_mode:
+            config_mode = "A"
+        print(f"[Phase8E diagnostic] Popup configuration: {config_mode}")
+
+        # 确定 Qt 窗口标志
+        tool_flag = Qt.WindowType.Tool if config_mode != "E" else Qt.WindowType.Window
+        focus_flag = Qt.WindowType.WindowDoesNotAcceptFocus if config_mode not in ("C", "D") else Qt.WindowType(0)
+
+        flags = tool_flag | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
+        if focus_flag:
+            flags |= focus_flag
+
+        self.setWindowFlags(flags)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
 
-        # 在 Windows 平台上应用 WS_EX_NOACTIVATE (0x08000000) 扩展样式（安全使用 GetWindowLongPtrW / SetWindowLongPtrW 及显式 ctypes 签名）
-        if platform.system() == "Windows":
+        # 在 Windows 平台上应用 WS_EX_NOACTIVATE (0x08000000) 扩展样式（除非配置 B 或 D 或 F）
+        if platform.system() == "Windows" and config_mode not in ("B", "D", "F"):
             try:
                 import ctypes
                 hwnd = int(self.winId())
