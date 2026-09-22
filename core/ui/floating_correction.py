@@ -141,9 +141,23 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         if platform.system() == "Windows":
             try:
                 import ctypes
-                msg = ctypes.pythonapi.PyCapsule_GetPointer(message, None) if message else None
-                if msg is not None:
-                    # MSG 结构体：HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, DWORD time, POINT pt
+                ptr = 0
+                if message:
+                    if isinstance(message, int):
+                        ptr = message
+                    elif hasattr(message, "__int__"):
+                        ptr = int(message)
+                    else:
+                        # Fallback for sip.voidptr or capsule
+                        try:
+                            ptr = ctypes.pythonapi.PyCapsule_GetPointer(message, None)
+                        except Exception:
+                            try:
+                                ptr = int(ctypes.cast(message, ctypes.c_void_p).value or 0)
+                            except Exception:
+                                ptr = 0
+
+                if ptr:
                     class MSG(ctypes.Structure):
                         _fields_ = [
                             ("hwnd", ctypes.c_void_p),
@@ -153,7 +167,7 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
                             ("time", ctypes.c_uint32),
                             ("pt", ctypes.c_long * 2),
                         ]
-                    m = ctypes.cast(msg, ctypes.POINTER(MSG)).contents
+                    m = ctypes.cast(ptr, ctypes.POINTER(MSG)).contents
                     if m.message == 0x0021:  # WM_MOUSEACTIVATE
                         return True, 3  # MA_NOACTIVATE = 3
             except Exception as e:
