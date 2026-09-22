@@ -79,6 +79,13 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
             print("H flags configured")
             return
 
+        if config_mode == "I":
+            print("I constructor entered")
+            print("I super().__init__ completed")
+            self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+            print("I flags configured")
+            return
+
         # 确定 Qt 窗口标志
         tool_flag = Qt.WindowType.Tool if config_mode != "E" else Qt.WindowType.Window
         focus_flag = Qt.WindowType.WindowDoesNotAcceptFocus if config_mode not in ("C", "D") else Qt.WindowType(0)
@@ -181,13 +188,14 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         """在屏幕指定坐标（通常靠近文本错误位置）显示弹窗，绝不抢焦"""
         import os
         config_mode = os.environ.get("GCOACH_POPUP_TEST", "A").strip().upper()
-        if config_mode == "H":
-            print("H show_at entered")
-            print("H move completed") # Since move follows immediately
+        if config_mode in ("H", "I"):
+            prefix = config_mode
+            print(f"{prefix} show_at entered")
+            print(f"{prefix} move completed")
             self.move(x, y)
-            print("H show entered")
+            print(f"{prefix} show entered")
             self.show()
-            print("H show completed")
+            print(f"{prefix} show completed")
             return
 
         print("[Phase8E isolation] show_at entered")
