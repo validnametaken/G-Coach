@@ -75,7 +75,7 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         if config_mode == "H":
             print("H constructor entered")
             print("H super().__init__ completed")
-            self.setWindowFlags(Qt.WindowType.WindowType.FramelessWindowHint)
+            self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
             print("H flags configured")
             return
 

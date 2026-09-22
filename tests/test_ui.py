@@ -346,6 +346,45 @@ class TestUIPresenter(unittest.TestCase):
         self.assertIsNotNone(popup)
         popup.close()
 
+    def test_phase_8e_popup_config_h(self):
+        """测试 Phase 8E 诊断配置 H 是否能够正确无误地构造弹出窗口"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from core.analysis import Finding
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication
+        import os
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        old_test_env = os.environ.get("GCOACH_POPUP_TEST")
+        os.environ["GCOACH_POPUP_TEST"] = "H"
+        try:
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Test",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+            target = CorrectionTarget()
+            popup = FloatingCorrectionPopup(finding, target, lambda f, t: None, lambda f: None)
+            self.assertIsNotNone(popup)
+            popup.show_at(100, 100)
+            popup.close()
+        finally:
+            if old_test_env is not None:
+                os.environ["GCOACH_POPUP_TEST"] = old_test_env
+            else:
+                os.environ.pop("GCOACH_POPUP_TEST", None)
+
 
 if __name__ == "__main__":
     unittest.main()
