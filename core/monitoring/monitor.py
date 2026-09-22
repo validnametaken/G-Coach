@@ -112,11 +112,22 @@ class LiveTextMonitor:
 
     def _monitor_loop(self) -> None:
         """后台监控与防抖循环"""
+        import os
         while True:
             with self._lock:
                 if not self._is_running:
                     break
             
+            isolation_mode = os.environ.get("GCOACH_POPUP_ISOLATION", "").strip().lower()
+            if isolation_mode == "popup":
+                # 隔离测试 1：POPUP-ONLY，跳过所有 UIA monitor 轮询
+                time.sleep(0.1)
+                continue
+
+            if isolation_mode == "monitor":
+                # 隔离测试 2：MONITOR-ONLY，正常执行 UIA 轮询并打印日志
+                print("[Phase8E isolation monitor] polling UIA focus...")
+
             self._poll_once()
             time.sleep(self.poll_interval)
 
