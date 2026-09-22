@@ -68,6 +68,11 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
         self.update_timer.timeout.connect(self._poll_monitor_state)
         self.update_timer.start()
 
+        # 隔离测试 1：POPUP-ONLY 如果环境变量设置为 popup，在窗口打开后 500ms 自动注入确定性 Finding 并测试弹窗渲染
+        import os
+        if os.environ.get("GCOACH_POPUP_ISOLATION", "").strip().lower() == "popup":
+            QTimer.singleShot(500, self._inject_test_popup_isolation)
+
     def _init_ui(self):
         """初始化 UI 布局与控件"""
         central_widget = QWidget(self)
@@ -185,6 +190,12 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
 
     def _poll_monitor_state(self):
         """轮询从 monitor 获取最新状态并在 UI 线程上刷新"""
+        import os
+        isolation_mode = os.environ.get("GCOACH_POPUP_ISOLATION", "").strip().lower()
+        if isolation_mode == "popup":
+            # 隔离测试 1：POPUP-ONLY（不启动监控，直接注入确定性 Finding 并测试弹窗渲染）
+            return
+
         try:
             state = self.monitor.get_state()
             self._update_ui_from_state(state)
@@ -363,6 +374,28 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
             print(f"[Phase8E diagnostic] Popup showing at ({popup_x}, {popup_y})")
             self.active_popup.show_at(popup_x, popup_y)
             print(f"[Phase8E diagnostic] Popup shown")
+
+    def _inject_test_popup_isolation(self):
+        """隔离测试 1：POPUP-ONLY 确定性注入 Finding 并调用 _sync_floating_popup"""
+        print("[Phase8E isolation] 1. creating finding")
+        finding = Finding(
+            source="Harper",
+            category="grammar",
+            message="Test grammar error",
+            original="was",
+            replacement="were",
+            start=13,
+            end=16,
+        )
+        state = MonitorState(
+            text="The students was happy.",
+            status="ready",
+            control_id="isolation-ctrl-1",
+            app_name="IsolationApp",
+        )
+        print("[Phase8E isolation] 2. calling _sync_floating_popup")
+        self._sync_floating_popup([finding], state)
+        print("[Phase8E isolation] injection completed")
 
     def _handle_popup_accept(self, finding: Finding, target: CorrectionTarget):
         """处理浮动弹窗的 Accept 点击：通过 BackgroundCorrectionEngine 无焦点直接修改目标控件"""

@@ -40,13 +40,16 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
     ):
         if not PYQT_AVAILABLE:
             raise RuntimeError("PyQt6 is required for FloatingCorrectionPopup.")
+        print("[Phase8E isolation] popup constructor entered")
         super().__init__(parent)
+        print("[Phase8E isolation] super().__init__ completed")
         self.finding = finding
         self.target = target
         self.on_accept = on_accept
         self.on_ignore = on_ignore
 
         self._init_window_flags()
+        print("[Phase8E isolation] popup constructor completed")
         self._init_ui()
 
     def _init_window_flags(self):
@@ -157,8 +160,13 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
 
     def show_at(self, x: int, y: int):
         """在屏幕指定坐标（通常靠近文本错误位置）显示弹窗，绝不抢焦"""
+        print("[Phase8E isolation] show_at entered")
+        print("[Phase8E isolation] move entered")
         self.move(x, y)
+        print("[Phase8E isolation] move completed")
+        print("[Phase8E isolation] show entered")
         self.show()
+        print("[Phase8E isolation] show completed")
 
     def nativeEvent(self, eventType: Any, message: int) -> Tuple[bool, int]:
         """拦截原生 Windows 消息，处理 WM_MOUSEACTIVATE (0x0021) 返回 MA_NOACTIVATE (3)，
