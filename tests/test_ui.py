@@ -177,9 +177,10 @@ class TestUIPresenter(unittest.TestCase):
             poll_interval=0.01,
         )
 
-        # 构建符合生产接口的 Mock Popup
+        # 构建符合生产接口的 Mock Popup（支持 parent 参数验证）
         class MockPopup:
             def __init__(self, finding, target, on_accept, on_ignore, parent=None):
+                self.parent_arg = parent
                 self.finding = finding
                 self.target = target
                 self.on_accept = on_accept
@@ -219,9 +220,10 @@ class TestUIPresenter(unittest.TestCase):
                 window._sync_floating_popup([finding], state)
 
                 window.current_findings = [finding]
-                # 验证 findings 出现时弹窗是否被正确同步创建并配置
+                # 验证 findings 出现时弹窗是否被正确同步创建并配置（验证传入的 parent 是否为 window 实例）
                 self.assertIsNotNone(window.active_popup)
                 self.assertIsInstance(window.active_popup, MockPopup)
+                self.assertEqual(window.active_popup.parent_arg, window)
                 self.assertEqual(window.last_popup_finding_id, window.current_findings[0].id)
                 self.assertEqual(window.active_popup.finding.original, window.current_findings[0].original)
 
