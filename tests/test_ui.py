@@ -699,6 +699,52 @@ class TestUIPresenter(unittest.TestCase):
             else:
                 os.environ.pop("GCOACH_POPUP_TEST", None)
 
+    def test_phase_8e_popup_config_p(self):
+        """测试 Phase 8E 诊断配置 P 是否包含正确的 Qt 标志、WA_ShowWithoutActivating 属性以及在 show 之后安全的 windowHandle 获取"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from core.analysis import Finding
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt
+        import os
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        old_test_env = os.environ.get("GCOACH_POPUP_TEST")
+        os.environ["GCOACH_POPUP_TEST"] = "P"
+        try:
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Test",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+            target = CorrectionTarget()
+            popup = FloatingCorrectionPopup(finding, target, lambda f, t: None, lambda f: None)
+            self.assertIsNotNone(popup)
+            flags = popup.windowFlags()
+            self.assertTrue(bool(flags & Qt.WindowType.FramelessWindowHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowStaysOnTopHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowDoesNotAcceptFocus))
+            self.assertFalse(bool(flags & Qt.WindowType.Tool))
+            self.assertTrue(popup.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating))
+            popup.show_at(100, 100)
+            popup.close()
+        finally:
+            if old_test_env is not None:
+                os.environ["GCOACH_POPUP_TEST"] = old_test_env
+            else:
+                os.environ.pop("GCOACH_POPUP_TEST", None)
+
 
 if __name__ == "__main__":
     unittest.main()

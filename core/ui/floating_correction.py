@@ -158,6 +158,18 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
             print("O flags, attributes and windowHandle configured")
             return
 
+        if config_mode == "P":
+            print("P constructor entered")
+            print("P super().__init__ completed")
+            self.setWindowFlags(
+                Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
+                | Qt.WindowType.WindowDoesNotAcceptFocus
+            )
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+            print("P flags and attributes configured")
+            return
+
         # 确定 Qt 窗口标志
         tool_flag = Qt.WindowType.Tool if config_mode != "E" else Qt.WindowType.Window
         focus_flag = Qt.WindowType.WindowDoesNotAcceptFocus if config_mode not in ("C", "D") else Qt.WindowType(0)
@@ -268,6 +280,17 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
             print(f"{prefix} show entered")
             self.show()
             print(f"{prefix} show completed")
+            return
+
+        if config_mode == "P":
+            print("P show_at entered")
+            print("P move completed")
+            self.move(x, y)
+            print("P before show")
+            self.show()
+            print("P after show")
+            window_handle = self.windowHandle()
+            print(f"P windowHandle after show: {window_handle}")
             return
 
         print("[Phase8E isolation] show_at entered")
