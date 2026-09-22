@@ -6,7 +6,7 @@ G-Coach Floating Correction Popup (PyQt6) - Phase 8E
 
 import logging
 import platform
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +133,33 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         """在屏幕指定坐标（通常靠近文本错误位置）显示弹窗，绝不抢焦"""
         self.move(x, y)
         self.show()
+
+    def nativeEvent(self, eventType: Any, message: int) -> Tuple[bool, int]:
+        """拦截原生 Windows 消息，处理 WM_MOUSEACTIVATE (0x0021) 返回 MA_NOACTIVATE (3)，
+        确保弹窗不抢占外部应用焦点，同时不丢弃鼠标点击事件。
+        """
+        if platform.system() == "Windows":
+            try:
+                import ctypes
+                msg = ctypes.pythonapi.PyCapsule_GetPointer(message, None) if message else None
+                if msg is not None:
+                    # MSG 结构体：HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, DWORD time, POINT pt
+                    class MSG(ctypes.Structure):
+                        _fields_ = [
+                            ("hwnd", ctypes.c_void_p),
+                            ("message", ctypes.c_uint32),
+                            ("wParam", ctypes.c_void_p),
+                            ("lParam", ctypes.c_void_p),
+                            ("time", ctypes.c_uint32),
+                            ("pt", ctypes.c_long * 2),
+                        ]
+                    m = ctypes.cast(msg, ctypes.POINTER(MSG)).contents
+                    if m.message == 0x0021:  # WM_MOUSEACTIVATE
+                        return True, 3  # MA_NOACTIVATE = 3
+            except Exception as e:
+                logger.debug(f"Error handling nativeEvent WM_MOUSEACTIVATE: {e}")
+
+        return super().nativeEvent(eventType, message)
 
     def _handle_accept(self):
         """点击 Accept：触发回调并关闭弹窗"""
