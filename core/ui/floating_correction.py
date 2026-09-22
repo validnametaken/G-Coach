@@ -40,6 +40,18 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
     ):
         if not PYQT_AVAILABLE:
             raise RuntimeError("PyQt6 is required for FloatingCorrectionPopup.")
+        import os
+        config_mode = os.environ.get("GCOACH_POPUP_TEST", "A").strip().upper()
+        if config_mode == "H":
+            super().__init__(parent)
+            self.finding = finding
+            self.target = target
+            self.on_accept = on_accept
+            self.on_ignore = on_ignore
+            self._init_window_flags()
+            self._init_ui()
+            return
+
         print("[Phase8E isolation] popup constructor entered")
         super().__init__(parent)
         print("[Phase8E isolation] super().__init__ completed")
@@ -59,6 +71,13 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         if not config_mode:
             config_mode = "A"
         print(f"[Phase8E diagnostic] Popup configuration: {config_mode}")
+
+        if config_mode == "H":
+            print("H constructor entered")
+            print("H super().__init__ completed")
+            self.setWindowFlags(Qt.WindowType.WindowType.FramelessWindowHint)
+            print("H flags configured")
+            return
 
         # 确定 Qt 窗口标志
         tool_flag = Qt.WindowType.Tool if config_mode != "E" else Qt.WindowType.Window
@@ -160,6 +179,17 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
 
     def show_at(self, x: int, y: int):
         """在屏幕指定坐标（通常靠近文本错误位置）显示弹窗，绝不抢焦"""
+        import os
+        config_mode = os.environ.get("GCOACH_POPUP_TEST", "A").strip().upper()
+        if config_mode == "H":
+            print("H show_at entered")
+            print("H move completed") # Since move follows immediately
+            self.move(x, y)
+            print("H show entered")
+            self.show()
+            print("H show completed")
+            return
+
         print("[Phase8E isolation] show_at entered")
         print("[Phase8E isolation] move entered")
         self.move(x, y)
