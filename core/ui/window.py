@@ -483,8 +483,14 @@ def main():
         poll_interval=0.05,
     )
 
-    # 6. 默认启动监控
-    monitor.start()
+    # 6. 默认启动监控（如果在 isolation popup 模式下，则不启动监控线程和 UIA）
+    import os
+    isolation_mode = os.environ.get("GCOACH_POPUP_ISOLATION", "").strip().lower()
+    if isolation_mode == "popup":
+        logger.info("[Phase8E isolation] GCOACH_POPUP_ISOLATION=popup detected: skipping monitor.start()")
+        print("[Phase8E isolation] Monitor is NOT running (isolated popup mode)")
+    else:
+        monitor.start()
 
     # 7. 创建主窗口
     window = GCoachWindow(monitor)
@@ -494,7 +500,8 @@ def main():
     exit_code = app.exec()
 
     # 9. 干净退出时停止监控器
-    monitor.stop()
+    if isolation_mode != "popup":
+        monitor.stop()
     sys.exit(exit_code)
 
 
