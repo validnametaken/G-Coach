@@ -79,6 +79,18 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
             print("H flags configured")
             return
 
+        if config_mode == "Q":
+            print("Q constructor entered")
+            print("Q super().__init__ completed")
+            self.setWindowFlags(
+                Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
+                | Qt.WindowType.WindowDoesNotAcceptFocus
+            )
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+            print("Q flags and attributes configured")
+            return
+
         if config_mode == "I":
             print("I constructor entered")
             print("I super().__init__ completed")
@@ -170,6 +182,8 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
             print("P flags and attributes configured")
             return
 
+
+
         # 确定 Qt 窗口标志
         tool_flag = Qt.WindowType.Tool if config_mode != "E" else Qt.WindowType.Window
         focus_flag = Qt.WindowType.WindowDoesNotAcceptFocus if config_mode not in ("C", "D") else Qt.WindowType(0)
@@ -182,8 +196,8 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
 
-        # 在 Windows 平台上应用 WS_EX_NOACTIVATE (0x08000000) 扩展样式（除非配置 B 或 D 或 F）
-        if platform.system() == "Windows" and config_mode not in ("B", "D", "F"):
+        # 在 Windows 平台上应用 WS_EX_NOACTIVATE (0x08000000) 扩展样式（除非配置 B 或 D 或 F 或 Q）
+        if platform.system() == "Windows" and config_mode not in ("B", "D", "F", "Q"):
             try:
                 import ctypes
                 hwnd = int(self.winId())
@@ -291,6 +305,13 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
             print("P after show")
             window_handle = self.windowHandle()
             print(f"P windowHandle after show: {window_handle}")
+            return
+
+        if config_mode == "Q":
+            print("[Phase8E Q] popup shown")
+            self.move(x, y)
+            self.show()
+            print("[Phase8E Q] waiting for interaction")
             return
 
         print("[Phase8E isolation] show_at entered")
