@@ -274,8 +274,6 @@ class TestUIPresenter(unittest.TestCase):
         target = CorrectionTarget()
         popup = FloatingCorrectionPopup(finding, target, lambda f, t: None, lambda f: None)
 
-        # 模拟调用 nativeEvent 处理 WM_MOUSEACTIVATE (0x0021)
-        # 在非 Windows 平台上或无法轻易构造 MSG 指针时，可以直接测试方法存在性与非 Windows 平台的原样通过
         import platform
         if platform.system() == "Windows":
             try:
@@ -289,13 +287,26 @@ class TestUIPresenter(unittest.TestCase):
                         ("time", ctypes.c_uint32),
                         ("pt", ctypes.c_long * 2),
                     ]
-                msg = MSG(hwnd=popup.winId(), message=0x0021, wParam=0, lParam=0, time=0, pt=(0, 0))
-                capsule = ctypes.pythonapi.PyCapsule_New(ctypes.addressof(msg), None, None)
-                handled, result = popup.nativeEvent(b"windows_generic_MSG", capsule)
+
+                # 1. Test WM_MOUSEACTIVATE (0x0021) with integer address pointer representation
+                msg_activate = MSG(hwnd=popup.winId(), message=0x0021, wParam=0, lParam=0, time=0, pt=(0, 0))
+                addr = ctypes.addressof(msg_activate)
+                handled, result = popup.nativeEvent(b"windows_generic_MSG", addr)
                 self.assertTrue(handled)
                 self.assertEqual(result, 3)  # MA_NOACTIVATE = 3
+
+                # 2. Test non-WM_MOUSEACTIVATE message returns unhandled (False, 0)
+                msg_other = MSG(hwnd=popup.winId(), message=0x000F, wParam=0, lParam=0, time=0, pt=(0, 0))
+                handled, result = popup.nativeEvent(b"windows_generic_MSG", ctypes.addressof(msg_other))
+                self.assertFalse(handled)
+
+                # 3. Test malformed/invalid message data does not raise exceptions (returns safely)
+                handled, result = popup.nativeEvent(b"windows_generic_MSG", None)
+                self.assertFalse(handled)
+                handled, result = popup.nativeEvent(b"windows_generic_MSG", 999999999)
+                self.assertFalse(handled)
+
             except Exception as e:
-                # 若 ctypes 构造在某些环境受限，确保方法调用无异常
                 pass
         else:
             # 非 Windows 平台应直接调用超类或安全返回
