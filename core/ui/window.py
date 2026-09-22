@@ -343,13 +343,20 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
                 self.active_popup.close()
                 self.active_popup = None
 
+            import os
+            config_mode = os.environ.get("GCOACH_POPUP_TEST", "A").strip().upper()
+            popup_parent = self if config_mode == "G" else None
+
+            print(f"[Phase8E diagnostic] Creating floating popup (parent={'self' if popup_parent else 'None'})")
             target = CorrectionTarget.from_snapshot(state)
             self.active_popup = FloatingCorrectionPopup(
                 finding=active_finding,
                 target=target,
                 on_accept=self._handle_popup_accept,
                 on_ignore=self._handle_popup_ignore,
+                parent=popup_parent,
             )
+            print(f"[Phase8E diagnostic] Popup constructed")
             self.last_popup_finding_id = active_finding.id
 
             # 计算弹窗显示坐标（定位在主窗口附近或屏幕合适位置，未来可集成 UIA 范围矩形）
@@ -357,7 +364,9 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
             main_pos = self.pos()
             popup_x = main_pos.x() + self.width() + 20
             popup_y = main_pos.y() + 150
+            print(f"[Phase8E diagnostic] Popup showing at ({popup_x}, {popup_y})")
             self.active_popup.show_at(popup_x, popup_y)
+            print(f"[Phase8E diagnostic] Popup shown")
 
     def _handle_popup_accept(self, finding: Finding, target: CorrectionTarget):
         """处理浮动弹窗的 Accept 点击：通过 BackgroundCorrectionEngine 无焦点直接修改目标控件"""
