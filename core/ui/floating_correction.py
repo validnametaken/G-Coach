@@ -91,6 +91,70 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
             print("Q flags and attributes configured")
             return
 
+        if config_mode == "Q-PARENT":
+            print("Q-PARENT constructor entered")
+            print("Q-PARENT super().__init__ completed")
+            self.setWindowFlags(
+                Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
+                | Qt.WindowType.WindowDoesNotAcceptFocus
+            )
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+            print("Q-PARENT flags and attributes configured")
+            return
+
+        if config_mode == "Q-TOPLEVEL":
+            print("Q-TOPLEVEL constructor entered")
+            print("Q-TOPLEVEL super().__init__ completed")
+            self.setWindowFlags(
+                Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
+                | Qt.WindowType.WindowDoesNotAcceptFocus
+            )
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+            print("Q-TOPLEVEL flags and attributes configured")
+            return
+
+        if config_mode == "Q-STEP1":
+            # 只有 FramelessWindowHint
+            print("Q-STEP1 constructor entered")
+            self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+            print("Q-STEP1 flags configured")
+            return
+
+        if config_mode == "Q-STEP2":
+            # FramelessWindowHint + WindowStaysOnTopHint
+            print("Q-STEP2 constructor entered")
+            self.setWindowFlags(
+                Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
+            )
+            print("Q-STEP2 flags configured")
+            return
+
+        if config_mode == "Q-STEP3":
+            # FramelessWindowHint + WindowStaysOnTopHint + WindowDoesNotAcceptFocus
+            print("Q-STEP3 constructor entered")
+            self.setWindowFlags(
+                Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
+                | Qt.WindowType.WindowDoesNotAcceptFocus
+            )
+            print("Q-STEP3 flags configured")
+            return
+
+        if config_mode == "Q-STEP4":
+            # FramelessWindowHint + WindowStaysOnTopHint + WindowDoesNotAcceptFocus + WA_ShowWithoutActivating
+            print("Q-STEP4 constructor entered")
+            self.setWindowFlags(
+                Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
+                | Qt.WindowType.WindowDoesNotAcceptFocus
+            )
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+            print("Q-STEP4 flags and attributes configured")
+            return
+
         if config_mode == "I":
             print("I constructor entered")
             print("I super().__init__ completed")
@@ -309,8 +373,34 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
 
         if config_mode == "Q":
             print("[Phase8E Q] popup shown")
+            print("before move")
             self.move(x, y)
+            print("after move")
+            print("before show")
             self.show()
+            print("show returned")
+            print("after show")
+            print("before query isVisible")
+            vis = self.isVisible()
+            print(f"after query isVisible: {vis}")
+            print("before query isWindow")
+            is_win = self.isWindow()
+            print(f"after query isWindow: {is_win}")
+            print("before query parent")
+            par = self.parent()
+            print(f"after query parent: {par}")
+            print("before query geometry")
+            geom = self.geometry()
+            print(f"after query geometry: {geom}")
+            print("before query pos")
+            p = self.pos()
+            print(f"after query pos: {p}")
+            print("before query size")
+            sz = self.size()
+            print(f"after query size: {sz}")
+            print("before query windowFlags")
+            wf = self.windowFlags()
+            print(f"after query windowFlags: {wf}")
             print("[Phase8E Q] waiting for interaction")
             return
 
