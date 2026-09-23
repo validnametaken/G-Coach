@@ -48,7 +48,7 @@ def main():
     # 检查是否有独立的最小化 Qt 顶层/父子组件诊断测试环境变量（必须在单实例检查与任何 G-Coach 业务逻辑之前运行）
     import os
     diag_mode = os.environ.get("GCOACH_POPUP_TEST", "").strip().upper()
-    if diag_mode in ("MINIMAL-TOPLEVEL", "MINIMAL-PARENTED", "POPUP-REDUCTION"):
+    if diag_mode in ("MINIMAL-TOPLEVEL", "MINIMAL-PARENTED", "POPUP-REDUCTION", "POPUP-CONSTRUCTOR"):
         app = QApplication(sys.argv)
         from PyQt6.QtWidgets import QWidget
         if diag_mode == "MINIMAL-TOPLEVEL":
@@ -203,6 +203,35 @@ def main():
 
             global _popup_reduction_refs
             _popup_reduction_refs = (w1, w2, w3, w4, w5, real_popup)
+        elif diag_mode == "POPUP-CONSTRUCTOR":
+            print("POPUP-CONSTRUCTOR diagnostic starting...")
+            from core.analysis import Finding
+            from core.ui.floating_correction import FloatingCorrectionPopup
+
+            print("[PopupCtor Diagnostic] before constructing FloatingCorrectionPopup(parent=None)")
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Agreement",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+            ctor_popup = FloatingCorrectionPopup(
+                finding=finding,
+                target=None,
+                on_accept=lambda f, t: None,
+                on_ignore=lambda f: None,
+                parent=None,
+            )
+            print("[PopupCtor Diagnostic] after constructing FloatingCorrectionPopup(parent=None)")
+            print("[PopupCtor Diagnostic] before show_at")
+            ctor_popup.show_at(200, 200)
+            print("[PopupCtor Diagnostic] after show_at")
+
+            global _popup_ctor_ref
+            _popup_ctor_ref = ctor_popup
 
         sys.exit(app.exec())
 
