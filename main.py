@@ -48,7 +48,7 @@ def main():
     # 检查是否有独立的最小化 Qt 顶层/父子组件诊断测试环境变量（必须在单实例检查与任何 G-Coach 业务逻辑之前运行）
     import os
     diag_mode = os.environ.get("GCOACH_POPUP_TEST", "").strip().upper()
-    if diag_mode in ("MINIMAL-TOPLEVEL", "MINIMAL-PARENTED", "POPUP-REDUCTION", "POPUP-CONSTRUCTOR", "POPUP-SHOW-ISOLATION"):
+    if diag_mode in ("MINIMAL-TOPLEVEL", "MINIMAL-PARENTED", "POPUP-REDUCTION", "POPUP-CONSTRUCTOR", "POPUP-SHOW-ISOLATION", "POPUP-NATIVE-EVENT-BYPASS"):
         app = QApplication(sys.argv)
         from PyQt6.QtWidgets import QWidget
         if diag_mode == "MINIMAL-TOPLEVEL":
@@ -345,6 +345,65 @@ def main():
 
             global _popup_isolation_refs
             _popup_isolation_refs = (popup_a, popup_b, widget_c)
+        elif diag_mode == "POPUP-NATIVE-EVENT-BYPASS":
+            print("POPUP-NATIVE-EVENT-BYPASS diagnostic starting...")
+            from core.analysis import Finding
+            from core.ui.floating_correction import FloatingCorrectionPopup
+
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Agreement",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+
+            # Control A — Current behavior (normal nativeEvent)
+            print("[NativeEventBypass Control A] before construction")
+            popup_a = FloatingCorrectionPopup(
+                finding=finding,
+                target=None,
+                on_accept=lambda f, t: None,
+                on_ignore=lambda f: None,
+                parent=None,
+            )
+            print("[NativeEventBypass Control A] constructed")
+            print("[NativeEventBypass Control A] before move")
+            popup_a.move(100, 100)
+            print("[NativeEventBypass Control A] moved")
+            print("[NativeEventBypass Control A] before show")
+            popup_a.show()
+            print("[NativeEventBypass Control A] show returned")
+
+            # Control B — Bypass nativeEvent BEFORE construction
+            print("[NativeEventBypass Control B] before monkeypatching nativeEvent")
+            original_native_event = FloatingCorrectionPopup.nativeEvent
+            FloatingCorrectionPopup.nativeEvent = lambda self, eventType, msg: (False, 0)
+            print("[NativeEventBypass Control B] nativeEvent replaced")
+
+            print("[NativeEventBypass Control B] before construction")
+            popup_b = FloatingCorrectionPopup(
+                finding=finding,
+                target=None,
+                on_accept=lambda f, t: None,
+                on_ignore=lambda f: None,
+                parent=None,
+            )
+            print("[NativeEventBypass Control B] constructed")
+            print("[NativeEventBypass Control B] before move")
+            popup_b.move(300, 100)
+            print("[NativeEventBypass Control B] moved")
+            print("[NativeEventBypass Control B] before show")
+            popup_b.show()
+            print("[NativeEventBypass Control B] show returned")
+
+            # Restore original nativeEvent safely
+            FloatingCorrectionPopup.nativeEvent = original_native_event
+
+            global _popup_bypass_refs
+            _popup_bypass_refs = (popup_a, popup_b)
 
         sys.exit(app.exec())
 
