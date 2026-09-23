@@ -48,7 +48,7 @@ def main():
     # 检查是否有独立的最小化 Qt 顶层/父子组件诊断测试环境变量（必须在单实例检查与任何 G-Coach 业务逻辑之前运行）
     import os
     diag_mode = os.environ.get("GCOACH_POPUP_TEST", "").strip().upper()
-    if diag_mode in ("MINIMAL-TOPLEVEL", "MINIMAL-PARENTED", "POPUP-REDUCTION", "POPUP-CONSTRUCTOR", "POPUP-SHOW-ISOLATION", "POPUP-NATIVE-EVENT-BYPASS"):
+    if diag_mode in ("MINIMAL-TOPLEVEL", "MINIMAL-PARENTED", "POPUP-REDUCTION", "POPUP-CONSTRUCTOR", "POPUP-SHOW-ISOLATION", "POPUP-NATIVE-EVENT-BYPASS-A", "POPUP-NATIVE-EVENT-BYPASS-B"):
         app = QApplication(sys.argv)
         from PyQt6.QtWidgets import QWidget
         if diag_mode == "MINIMAL-TOPLEVEL":
@@ -345,8 +345,8 @@ def main():
 
             global _popup_isolation_refs
             _popup_isolation_refs = (popup_a, popup_b, widget_c)
-        elif diag_mode == "POPUP-NATIVE-EVENT-BYPASS":
-            print("POPUP-NATIVE-EVENT-BYPASS diagnostic starting...")
+        elif diag_mode == "POPUP-NATIVE-EVENT-BYPASS-A":
+            print("POPUP-NATIVE-EVENT-BYPASS-A diagnostic starting...")
             from core.analysis import Finding
             from core.ui.floating_correction import FloatingCorrectionPopup
 
@@ -361,7 +361,6 @@ def main():
             )
 
             try:
-                # Control A — Current behavior (normal nativeEvent)
                 print("[NativeEventBypass Control A] before construction")
                 popup_a = FloatingCorrectionPopup(
                     finding=finding,
@@ -372,17 +371,36 @@ def main():
                 )
                 print("[NativeEventBypass Control A] constructed")
                 print("[NativeEventBypass Control A] before move")
-                popup_a.move(100, 100)
+                popup_a.move(200, 200)
                 print("[NativeEventBypass Control A] moved")
                 print("[NativeEventBypass Control A] before show")
                 popup_a.show()
                 print("[NativeEventBypass Control A] show returned")
+                vis = popup_a.isVisible()
+                print(f"[NativeEventBypass Control A] isVisible: {vis}")
             except Exception as e:
                 print(f"[NativeEventBypass Control A] Error: {e}")
 
+            global _popup_bypass_ref_a
+            _popup_bypass_ref_a = popup_a
+
+        elif diag_mode == "POPUP-NATIVE-EVENT-BYPASS-B":
+            print("POPUP-NATIVE-EVENT-BYPASS-B diagnostic starting...")
+            from core.analysis import Finding
+            from core.ui.floating_correction import FloatingCorrectionPopup
+
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Agreement",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+
             original_native_event = None
             try:
-                # Control B — Bypass nativeEvent BEFORE construction
                 print("[NativeEventBypass Control B] before monkeypatching nativeEvent")
                 original_native_event = FloatingCorrectionPopup.nativeEvent
                 FloatingCorrectionPopup.nativeEvent = lambda self, eventType, msg: (False, 0)
@@ -398,19 +416,21 @@ def main():
                 )
                 print("[NativeEventBypass Control B] constructed")
                 print("[NativeEventBypass Control B] before move")
-                popup_b.move(300, 100)
+                popup_b.move(200, 200)
                 print("[NativeEventBypass Control B] moved")
                 print("[NativeEventBypass Control B] before show")
                 popup_b.show()
                 print("[NativeEventBypass Control B] show returned")
+                vis = popup_b.isVisible()
+                print(f"[NativeEventBypass Control B] isVisible: {vis}")
             except Exception as e:
                 print(f"[NativeEventBypass Control B] Error: {e}")
             finally:
                 if original_native_event is not None:
                     FloatingCorrectionPopup.nativeEvent = original_native_event
 
-            global _popup_bypass_refs
-            _popup_bypass_refs = (popup_a, popup_b)
+            global _popup_bypass_ref_b
+            _popup_bypass_ref_b = popup_b
 
         sys.exit(app.exec())
 
