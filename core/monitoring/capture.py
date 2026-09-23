@@ -280,5 +280,6 @@ class WindowsUIAccessibilityTextSource(TextSource):
                 "automation_id": automation_id,
                 "hwnd": hwnd,
                 "class_name": class_name,
+                "element_ref": focused,
             },
         }
