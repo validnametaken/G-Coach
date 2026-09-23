@@ -370,14 +370,14 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
             all_screens_geom = [s.geometry() for s in QApplication.screens()]
             print(f"[Phase8E Screen Diagnostic] Primary screen: {primary_geom}, All screens: {all_screens_geom}")
 
-            # 永久采用配置 G 的 owned popup 策略（通过将 GCoachWindow 作为父窗口传入，解决 Win32 独立 Tool 窗口无主窗口引用在 show() 时触发的 DWM/user32 访问违例问题）
+            # 不传递 Qt 父窗口（parent=None），确保 FloatingCorrectionPopup 是独立顶层窗口（True top-level window, isWindow() == True, parent() == None），其坐标解释为全局屏幕坐标
             target = CorrectionTarget.from_snapshot(state)
             self.active_popup = FloatingCorrectionPopup(
                 finding=active_finding,
                 target=target,
                 on_accept=self._handle_popup_accept,
                 on_ignore=self._handle_popup_ignore,
-                parent=self,
+                parent=None,
             )
             print(f"[Phase8E diagnostic] Popup constructed")
             self.last_popup_finding_id = active_finding.id
