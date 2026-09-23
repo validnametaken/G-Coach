@@ -1,5 +1,5 @@
 """
-分析引擎抽象基类与元数据 - Phase 1 Unified Analysis Foundation
+Abstract base class and metadata for analysis engines - Phase 1 Unified Analysis Foundation
 """
 
 from abc import ABC, abstractmethod
@@ -8,10 +8,10 @@ from .finding import Finding
 
 
 class BaseAnalysisEngine(ABC):
-    """分析引擎抽象基类
+    """Abstract base class for analysis engines
 
-    所有分析引擎（如 Harper, GECToR, no-ai-slop 以及测试引擎）
-    均应继承此类并实现 analyze 方法及相关元数据属性。
+    All analysis engines (such as Harper, GECToR, no-ai-slop, and test engines)
+    should inherit from this class and implement the analyze method and related metadata properties.
     """
 
     def __init__(self, name: str, version: str = "1.0.0", is_local: bool = True):
@@ -21,36 +21,36 @@ class BaseAnalysisEngine(ABC):
 
     @property
     def name(self) -> str:
-        """引擎名称"""
+        """Engine name"""
         return self._name
 
     @property
     def version(self) -> str:
-        """引擎版本"""
+        """Engine version"""
         return self._version
 
     @property
     def is_local(self) -> bool:
-        """是否为本地/离线引擎"""
+        """Whether it is a local/offline engine"""
         return self._is_local
 
     @property
     def supported_types(self) -> List[str]:
-        """支持的分析类型列表"""
+        """List of supported analysis types"""
         return ["grammar", "spelling", "style"]
 
     @property
     def supports_auto_fix(self) -> bool:
-        """是否支持自动修复"""
+        """Whether auto-fix is supported"""
         return True
 
     @abstractmethod
     def analyze(self, text: str) -> List[Finding]:
-        """对输入文本进行分析，返回标准化 Findings 列表"""
+        """Analyze input text and return a list of standardized Findings"""
         pass
 
     def get_metadata(self) -> Dict[str, Any]:
-        """获取引擎元数据"""
+        """Get engine metadata"""
         return {
             "name": self.name,
             "version": self.version,

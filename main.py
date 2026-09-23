@@ -1,6 +1,6 @@
 """
-AI Prompt Optimizer - 主入口
-一款 Windows 桌面工具，通过大模型 API 优化文字并自动复制到剪切板。
+G-Coach - Main Entry Point
+An advanced offline-capable Windows desktop writing assistant and grammar correction tool.
 """
 
 import sys
@@ -11,9 +11,9 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 
-# Windows 任务栏图标设置
+# Windows taskbar icon setting
 try:
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AIPromptOptimizer")
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("GCoach")
 except Exception:
     pass
 
@@ -35,12 +35,13 @@ def _ensure_single_instance() -> bool:
     _single_instance_mutex = ctypes.windll.kernel32.CreateMutexW(
         None,
         False,
-        "Global\\AI_Prompt_Optimizer_Single_Instance",
+        "Global\\G_Coach_Single_Instance",
     )
     if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
-        print("[Main] 已有实例在运行，当前实例退出")
+        print("[Main] Another instance is already running. Exiting current instance.")
         return False
     return True
+
 
 
 def main():
