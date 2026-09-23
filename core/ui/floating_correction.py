@@ -131,7 +131,7 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
             print("Q-TOPLEVEL flags and attributes configured")
             return
 
-        if config_mode in ("POPUP-CONSTRUCTOR", "POPUP-SHOW-ISOLATION"):
+        if config_mode == "POPUP-CONSTRUCTOR":
             print(f"{config_mode} constructor entered")
             print(f"{config_mode} super().__init__ completed")
             self.setWindowFlags(

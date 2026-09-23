@@ -360,47 +360,54 @@ def main():
                 end=3,
             )
 
-            # Control A — Current behavior (normal nativeEvent)
-            print("[NativeEventBypass Control A] before construction")
-            popup_a = FloatingCorrectionPopup(
-                finding=finding,
-                target=None,
-                on_accept=lambda f, t: None,
-                on_ignore=lambda f: None,
-                parent=None,
-            )
-            print("[NativeEventBypass Control A] constructed")
-            print("[NativeEventBypass Control A] before move")
-            popup_a.move(100, 100)
-            print("[NativeEventBypass Control A] moved")
-            print("[NativeEventBypass Control A] before show")
-            popup_a.show()
-            print("[NativeEventBypass Control A] show returned")
+            try:
+                # Control A — Current behavior (normal nativeEvent)
+                print("[NativeEventBypass Control A] before construction")
+                popup_a = FloatingCorrectionPopup(
+                    finding=finding,
+                    target=None,
+                    on_accept=lambda f, t: None,
+                    on_ignore=lambda f: None,
+                    parent=None,
+                )
+                print("[NativeEventBypass Control A] constructed")
+                print("[NativeEventBypass Control A] before move")
+                popup_a.move(100, 100)
+                print("[NativeEventBypass Control A] moved")
+                print("[NativeEventBypass Control A] before show")
+                popup_a.show()
+                print("[NativeEventBypass Control A] show returned")
+            except Exception as e:
+                print(f"[NativeEventBypass Control A] Error: {e}")
 
-            # Control B — Bypass nativeEvent BEFORE construction
-            print("[NativeEventBypass Control B] before monkeypatching nativeEvent")
-            original_native_event = FloatingCorrectionPopup.nativeEvent
-            FloatingCorrectionPopup.nativeEvent = lambda self, eventType, msg: (False, 0)
-            print("[NativeEventBypass Control B] nativeEvent replaced")
+            original_native_event = None
+            try:
+                # Control B — Bypass nativeEvent BEFORE construction
+                print("[NativeEventBypass Control B] before monkeypatching nativeEvent")
+                original_native_event = FloatingCorrectionPopup.nativeEvent
+                FloatingCorrectionPopup.nativeEvent = lambda self, eventType, msg: (False, 0)
+                print("[NativeEventBypass Control B] nativeEvent replaced")
 
-            print("[NativeEventBypass Control B] before construction")
-            popup_b = FloatingCorrectionPopup(
-                finding=finding,
-                target=None,
-                on_accept=lambda f, t: None,
-                on_ignore=lambda f: None,
-                parent=None,
-            )
-            print("[NativeEventBypass Control B] constructed")
-            print("[NativeEventBypass Control B] before move")
-            popup_b.move(300, 100)
-            print("[NativeEventBypass Control B] moved")
-            print("[NativeEventBypass Control B] before show")
-            popup_b.show()
-            print("[NativeEventBypass Control B] show returned")
-
-            # Restore original nativeEvent safely
-            FloatingCorrectionPopup.nativeEvent = original_native_event
+                print("[NativeEventBypass Control B] before construction")
+                popup_b = FloatingCorrectionPopup(
+                    finding=finding,
+                    target=None,
+                    on_accept=lambda f, t: None,
+                    on_ignore=lambda f: None,
+                    parent=None,
+                )
+                print("[NativeEventBypass Control B] constructed")
+                print("[NativeEventBypass Control B] before move")
+                popup_b.move(300, 100)
+                print("[NativeEventBypass Control B] moved")
+                print("[NativeEventBypass Control B] before show")
+                popup_b.show()
+                print("[NativeEventBypass Control B] show returned")
+            except Exception as e:
+                print(f"[NativeEventBypass Control B] Error: {e}")
+            finally:
+                if original_native_event is not None:
+                    FloatingCorrectionPopup.nativeEvent = original_native_event
 
             global _popup_bypass_refs
             _popup_bypass_refs = (popup_a, popup_b)
