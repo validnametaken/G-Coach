@@ -48,7 +48,7 @@ def main():
     # 检查是否有独立的最小化 Qt 顶层/父子组件诊断测试环境变量（必须在单实例检查与任何 G-Coach 业务逻辑之前运行）
     import os
     diag_mode = os.environ.get("GCOACH_POPUP_TEST", "").strip().upper()
-    if diag_mode in ("MINIMAL-TOPLEVEL", "MINIMAL-PARENTED"):
+    if diag_mode in ("MINIMAL-TOPLEVEL", "MINIMAL-PARENTED", "POPUP-REDUCTION"):
         app = QApplication(sys.argv)
         from PyQt6.QtWidgets import QWidget
         if diag_mode == "MINIMAL-TOPLEVEL":
@@ -99,6 +99,110 @@ def main():
 
             global _minimal_parented_ref
             _minimal_parented_ref = (parent_widget, child_widget)
+        elif diag_mode == "POPUP-REDUCTION":
+            print("POPUP-REDUCTION diagnostic starting...")
+            from PyQt6.QtCore import Qt
+            from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+            from core.analysis import Finding
+            from core.ui.floating_correction import FloatingCorrectionPopup
+
+            # Stage 1 — QWidget base (unparented top-level)
+            print("POPUP-REDUCTION Stage 1: before construction")
+            w1 = QWidget(None)
+            print("POPUP-REDUCTION Stage 1: constructed")
+            w1.resize(200, 80)
+            print("POPUP-REDUCTION Stage 1: before show")
+            w1.show()
+            print("POPUP-REDUCTION Stage 1: show returned")
+            print(f"POPUP-REDUCTION Stage 1: isVisible={w1.isVisible()}, isWindow={w1.isWindow()}")
+
+            # Stage 2 — basic layout
+            print("POPUP-REDUCTION Stage 2: before construction & layout")
+            w2 = QWidget(None)
+            layout2 = QVBoxLayout(w2)
+            layout2.setContentsMargins(10, 10, 10, 10)
+            print("POPUP-REDUCTION Stage 2: constructed & layout added")
+            w2.resize(200, 80)
+            print("POPUP-REDUCTION Stage 2: before show")
+            w2.show()
+            print("POPUP-REDUCTION Stage 2: show returned")
+
+            # Stage 3 — label/text widget
+            print("POPUP-REDUCTION Stage 3: before construction & label")
+            w3 = QWidget(None)
+            layout3 = QVBoxLayout(w3)
+            layout3.setContentsMargins(10, 10, 10, 10)
+            lbl3 = QLabel("Change \"was\" to \"were\"", w3)
+            layout3.addWidget(lbl3)
+            print("POPUP-REDUCTION Stage 3: constructed, layout & label added")
+            w3.resize(200, 80)
+            print("POPUP-REDUCTION Stage 3: before show")
+            w3.show()
+            print("POPUP-REDUCTION Stage 3: show returned")
+
+            # Stage 4 — buttons
+            print("POPUP-REDUCTION Stage 4: before construction & buttons")
+            w4 = QWidget(None)
+            layout4 = QVBoxLayout(w4)
+            layout4.setContentsMargins(10, 10, 10, 10)
+            lbl4 = QLabel("Change \"was\" to \"were\"", w4)
+            layout4.addWidget(lbl4)
+            btn_layout4 = QHBoxLayout()
+            b1 = QPushButton("Accept", w4)
+            b2 = QPushButton("Ignore", w4)
+            btn_layout4.addWidget(b1)
+            btn_layout4.addWidget(b2)
+            layout4.addLayout(btn_layout4)
+            print("POPUP-REDUCTION Stage 4: constructed, layout, label & buttons added")
+            w4.resize(200, 80)
+            print("POPUP-REDUCTION Stage 4: before show")
+            w4.show()
+            print("POPUP-REDUCTION Stage 4: show returned")
+
+            # Stage 5 — popup flags (FramelessWindowHint, WindowStaysOnTopHint, WindowDoesNotAcceptFocus, WA_ShowWithoutActivating)
+            print("POPUP-REDUCTION Stage 5: before construction & flags")
+            w5 = QWidget(None)
+            w5.setWindowFlags(
+                Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
+                | Qt.WindowType.WindowDoesNotAcceptFocus
+            )
+            w5.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+            layout5 = QVBoxLayout(w5)
+            layout5.setContentsMargins(10, 10, 10, 10)
+            lbl5 = QLabel("Change \"was\" to \"were\"", w5)
+            layout5.addWidget(lbl5)
+            print("POPUP-REDUCTION Stage 5: constructed, flags & layout added")
+            w5.resize(200, 80)
+            print("POPUP-REDUCTION Stage 5: before show")
+            w5.show()
+            print("POPUP-REDUCTION Stage 5: show returned")
+
+            # Stage 6 — actual FloatingCorrectionPopup initialization (parent=None, no winId(), no Tool, no ctypes, no nativeEvent)
+            print("POPUP-REDUCTION Stage 6: before real FloatingCorrectionPopup(parent=None)")
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Agreement",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+            real_popup = FloatingCorrectionPopup(
+                finding=finding,
+                target=None,
+                on_accept=lambda f, t: None,
+                on_ignore=lambda f: None,
+                parent=None,
+            )
+            print("POPUP-REDUCTION Stage 6: real FloatingCorrectionPopup constructed")
+            print("POPUP-REDUCTION Stage 6: before show_at")
+            real_popup.show_at(200, 200)
+            print("POPUP-REDUCTION Stage 6: show_at returned")
+
+            global _popup_reduction_refs
+            _popup_reduction_refs = (w1, w2, w3, w4, w5, real_popup)
 
         sys.exit(app.exec())
 
