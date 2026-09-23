@@ -248,6 +248,84 @@ class TestUIPresenter(unittest.TestCase):
         finally:
             window.close()
             monitor.stop()
+    def test_popup_reuse_with_semantic_signature(self):
+        """回归测试：验证当 findings 内容相同但 id 不同（每次分析重新实例化）时，_sync_floating_popup 会复用现有的 active_popup 而不重新创建"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from unittest.mock import patch
+        from core.analysis import AnalysisPipeline, AnalysisResolver, HarperAnalysisEngine
+        from core.monitoring import MockTextSource, LiveTextMonitor
+        from core.ui.window import GCoachWindow
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        pipeline = AnalysisPipeline()
+        pipeline.register_engine(HarperAnalysisEngine())
+        resolver = AnalysisResolver()
+        text_source = MockTextSource(initial_text="The students was happy.")
+        monitor = LiveTextMonitor(
+            text_source=text_source,
+            pipeline=pipeline,
+            resolver=resolver,
+            debounce_interval=0.01,
+            poll_interval=0.01,
+        )
+
+        class MockPopup:
+            def __init__(self, finding, target, on_accept, on_ignore, parent=None):
+                self.finding = finding
+                self.shown = False
+                self.closed = False
+
+            def show_at(self, x: int, y: int):
+                self.shown = True
+
+            def close(self):
+                self.closed = True
+
+        window = GCoachWindow(monitor)
+        try:
+            with patch("core.ui.window.FloatingCorrectionPopup", MockPopup):
+                f1 = Finding(
+                    source="Harper",
+                    category="grammar",
+                    message="Agreement",
+                    original="was",
+                    replacement="were",
+                    start=13,
+                    end=16,
+                )
+                state = MonitorState(generation=1, text="The students was happy.", findings=[f1], status="ready")
+                window._sync_floating_popup([f1], state)
+                popup1 = window.active_popup
+                self.assertIsNotNone(popup1)
+
+                # 模拟第二次轮询，生成具有相同语义内容但新随机 id 的 Finding
+                f2 = Finding(
+                    source="Harper",
+                    category="grammar",
+                    message="Agreement",
+                    original="was",
+                    replacement="were",
+                    start=13,
+                    end=16,
+                )
+                self.assertNotEqual(f1.id, f2.id)
+
+                window._sync_floating_popup([f2], state)
+                popup2 = window.active_popup
+                # 验证弹窗被复用，而不是被关闭重建
+                self.assertEqual(popup1, popup2)
+                self.assertFalse(popup1.closed)
+        finally:
+            window.close()
+            monitor.stop()
+
 
     def test_phase_8e_floating_popup_native_event_wm_mouseactivate(self):
         """测试 FloatingCorrectionPopup 在 Windows 平台上的 nativeEvent 对 WM_MOUSEACTIVATE 的处理"""

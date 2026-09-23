@@ -56,6 +56,7 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
         self.correction_controller = CorrectionController()
         self.active_popup: Optional[FloatingCorrectionPopup] = None
         self.last_popup_finding_id: Optional[str] = None
+        self.last_popup_finding_signature: Optional[Tuple[str, str, str, int, int]] = None
 
         self.setWindowTitle("G-Coach - Personal Writing Assistant")
         self.resize(900, 700)
@@ -343,16 +344,31 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
                 self.active_popup.close()
                 self.active_popup = None
                 self.last_popup_finding_id = None
+                self.last_popup_finding_signature = None
             return
 
         # 选择第一个高优 finding 进行悬浮展示
         active_finding = findings[0]
+        active_signature = (
+            active_finding.source,
+            active_finding.original,
+            active_finding.replacement,
+            active_finding.start,
+            active_finding.end
+        )
 
-        # 如果当前没有弹出窗口，或者 finding 发生变化，则创建/重建弹窗
-        if self.active_popup is None or self.last_popup_finding_id != active_finding.id:
+        # 如果当前没有弹出窗口，或者 finding 发生语义变化，则创建/重建弹窗
+        if self.active_popup is None or getattr(self, "last_popup_finding_signature", None) != active_signature:
             if self.active_popup:
+                print(f"[Phase8E diagnostic] Finding changed or popup recreation requested. Closing old popup.")
                 self.active_popup.close()
                 self.active_popup = None
+
+            # 记录屏幕与窗口几何信息用于诊断坐标
+            primary_screen = QApplication.primaryScreen()
+            primary_geom = primary_screen.geometry() if primary_screen else "None"
+            all_screens_geom = [s.geometry() for s in QApplication.screens()]
+            print(f"[Phase8E Screen Diagnostic] Primary screen: {primary_geom}, All screens: {all_screens_geom}")
 
             # 永久采用配置 G 的 owned popup 策略（通过将 GCoachWindow 作为父窗口传入，解决 Win32 独立 Tool 窗口无主窗口引用在 show() 时触发的 DWM/user32 访问违例问题）
             target = CorrectionTarget.from_snapshot(state)
@@ -365,15 +381,30 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
             )
             print(f"[Phase8E diagnostic] Popup constructed")
             self.last_popup_finding_id = active_finding.id
+            self.last_popup_finding_signature = active_signature
 
-            # 计算弹窗显示坐标（定位在主窗口附近或屏幕合适位置，未来可集成 UIA 范围矩形）
-            # 获取主窗口右侧或下方作为默认优雅位置，避免遮挡正文
+            # 计算弹窗显示坐标（定位在主窗口附近或屏幕合适位置）
             main_pos = self.pos()
             popup_x = main_pos.x() + self.width() + 20
             popup_y = main_pos.y() + 150
-            print(f"[Phase8E diagnostic] Popup showing at ({popup_x}, {popup_y})")
+            print(f"[Phase8E diagnostic] Popup showing at ({popup_x}, {popup_y}) [Main pos: {main_pos}, width: {self.width()}]")
             self.active_popup.show_at(popup_x, popup_y)
             print(f"[Phase8E diagnostic] Popup shown")
+        else:
+            # 弹窗已存在且 signature 相同，复用现有弹窗并记录其状态供诊断观察
+            if self.active_popup:
+                print(
+                    f"[Phase8E Popup State (Poll Reuse)] isVisible={self.active_popup.isVisible()}, "
+                    f"isHidden={self.active_popup.isHidden()}, "
+                    f"isEnabled={self.active_popup.isEnabled()}, "
+                    f"isWindow={self.active_popup.isWindow()}, "
+                    f"parent={self.active_popup.parent()}, "
+                    f"objectName={self.active_popup.objectName()}, "
+                    f"geometry={self.active_popup.geometry()}, "
+                    f"pos={self.active_popup.pos()}, "
+                    f"size={self.active_popup.size()}, "
+                    f"windowFlags={self.active_popup.windowFlags()}"
+                )
 
     def _inject_test_popup_isolation(self):
         """隔离测试 1：POPUP-ONLY 确定性注入 Finding 并调用 _sync_floating_popup"""
