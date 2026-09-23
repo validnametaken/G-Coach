@@ -42,20 +42,14 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
             raise RuntimeError("PyQt6 is required for FloatingCorrectionPopup.")
         import os
         config_mode = os.environ.get("GCOACH_POPUP_TEST", "A").strip().upper()
-        if config_mode == "POPUP-CONSTRUCTOR":
-            print("[PopupCtor] 01 before super().__init__")
+        if config_mode in ("POPUP-CONSTRUCTOR", "POPUP-SHOW-ISOLATION"):
             super().__init__(parent)
-            print("[PopupCtor] 02 after super().__init__")
             self.finding = finding
             self.target = target
             self.on_accept = on_accept
             self.on_ignore = on_ignore
-            print("[PopupCtor] 03 before _init_window_flags")
             self._init_window_flags()
-            print("[PopupCtor] 04 after _init_window_flags")
-            print("[PopupCtor] 05 before _init_ui")
             self._init_ui()
-            print("[PopupCtor] 06 after _init_ui")
             return
 
         if config_mode == "H":
