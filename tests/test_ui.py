@@ -327,17 +327,16 @@ class TestUIPresenter(unittest.TestCase):
             monitor.stop()
 
 
-    def test_phase_8e_floating_popup_native_event_wm_mouseactivate(self):
-        """测试 FloatingCorrectionPopup 在 Windows 平台上的 nativeEvent 对 WM_MOUSEACTIVATE 的处理"""
-        from core.ui.window import PYQT_AVAILABLE
+    def test_floating_correction_popup_has_no_native_event_and_uses_qt_non_activation(self):
+        """回归测试：验证 FloatingCorrectionPopup 不再定义任何自定义 nativeEvent，且具备正确的 Qt 无激活标志与属性"""
+        from core.ui.floating_correction import FloatingCorrectionPopup, PYQT_AVAILABLE
         if not PYQT_AVAILABLE:
             return
 
-        from core.ui.floating_correction import FloatingCorrectionPopup
-        from core.analysis import Finding
-        from core.correction.target import CorrectionTarget
-        from PyQt6.QtWidgets import QApplication
+        self.assertFalse("nativeEvent" in FloatingCorrectionPopup.__dict__)
 
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt
         app = QApplication.instance()
         if not app:
             app = QApplication([])
@@ -352,46 +351,16 @@ class TestUIPresenter(unittest.TestCase):
             end=3,
         )
         target = CorrectionTarget()
-        popup = FloatingCorrectionPopup(finding, target, lambda f, t: None, lambda f: None)
-
-        import platform
-        if platform.system() == "Windows":
-            try:
-                import ctypes
-                class MSG(ctypes.Structure):
-                    _fields_ = [
-                        ("hwnd", ctypes.c_void_p),
-                        ("message", ctypes.c_uint32),
-                        ("wParam", ctypes.c_void_p),
-                        ("lParam", ctypes.c_void_p),
-                        ("time", ctypes.c_uint32),
-                        ("pt", ctypes.c_long * 2),
-                    ]
-
-                # 1. Test WM_MOUSEACTIVATE (0x0021) with integer address pointer representation
-                msg_activate = MSG(hwnd=popup.winId(), message=0x0021, wParam=0, lParam=0, time=0, pt=(0, 0))
-                addr = ctypes.addressof(msg_activate)
-                handled, result = popup.nativeEvent(b"windows_generic_MSG", addr)
-                self.assertTrue(handled)
-                self.assertEqual(result, 3)  # MA_NOACTIVATE = 3
-
-                # 2. Test non-WM_MOUSEACTIVATE message returns unhandled (False, 0)
-                msg_other = MSG(hwnd=popup.winId(), message=0x000F, wParam=0, lParam=0, time=0, pt=(0, 0))
-                handled, result = popup.nativeEvent(b"windows_generic_MSG", ctypes.addressof(msg_other))
-                self.assertFalse(handled)
-
-                # 3. Test malformed/invalid message data does not raise exceptions (returns safely)
-                handled, result = popup.nativeEvent(b"windows_generic_MSG", None)
-                self.assertFalse(handled)
-                handled, result = popup.nativeEvent(b"windows_generic_MSG", 999999999)
-                self.assertFalse(handled)
-
-            except Exception as e:
-                pass
-        else:
-            # 非 Windows 平台应直接调用超类或安全返回
-            handled, result = popup.nativeEvent("generic", 0)
-            self.assertFalse(handled)
+        popup = FloatingCorrectionPopup(
+            finding=finding,
+            target=target,
+            on_accept=lambda f, t: None,
+            on_ignore=lambda f: None,
+            parent=None,
+        )
+        self.assertIsNone(popup.parent())
+        self.assertTrue(popup.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating))
+        self.assertTrue(popup.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus)
         popup.close()
 
     def test_phase_8e_floating_popup_win32_style_safety(self):

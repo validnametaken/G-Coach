@@ -288,32 +288,7 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
 
-        # 在 Windows 平台上应用 WS_EX_NOACTIVATE (0x08000000) 扩展样式（除非配置 B 或 D 或 F 或 Q 或 POPUP-NATIVE-EVENT-BYPASS）
-        if platform.system() == "Windows" and config_mode not in ("B", "D", "F", "Q", "POPUP-NATIVE-EVENT-BYPASS"):
-            try:
-                import ctypes
-                hwnd = int(self.winId())
-                if hwnd:
-                    user32 = ctypes.windll.user32
 
-                    # 配置 GetWindowLongPtrW 签名
-                    get_window_long_ptr = user32.GetWindowLongPtrW
-                    get_window_long_ptr.argtypes = [ctypes.c_void_p, ctypes.c_int]
-                    get_window_long_ptr.restype = ctypes.c_ssize_t
-
-                    # 配置 SetWindowLongPtrW 签名
-                    set_window_long_ptr = user32.SetWindowLongPtrW
-                    set_window_long_ptr.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
-                    set_window_long_ptr.restype = ctypes.c_ssize_t
-
-                    ex_style = get_window_long_ptr(hwnd, -20)  # GWL_EXSTYLE = -20
-                    if ex_style != 0 or ctypes.get_last_error() == 0:
-                        new_style = ex_style | 0x08000000  # WS_EX_NOACTIVATE
-                        res = set_window_long_ptr(hwnd, -20, new_style)
-                        if res == 0 and ctypes.get_last_error() != 0:
-                            logger.warning(f"SetWindowLongPtrW failed with error code: {ctypes.get_last_error()}")
-            except Exception as e:
-                logger.warning(f"Could not apply WS_EX_NOACTIVATE style securely: {e}")
 
     def _init_ui(self):
         """初始化精简的弹窗布局"""
@@ -440,52 +415,7 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         self.show()
         print("[Phase8E isolation] show completed")
 
-    def nativeEvent(self, eventType: Any, message: int) -> Tuple[bool, int]:
-        """拦截原生 Windows 消息，处理 WM_MOUSEACTIVATE (0x0021) 返回 MA_NOACTIVATE (3)，
-        确保弹窗不抢占外部应用焦点，同时不丢弃鼠标点击事件。
-        """
-        import os
-        config_mode = os.environ.get("GCOACH_POPUP_TEST", "A").strip().upper()
-        if config_mode == "N":
-            print(f"N nativeEvent type={eventType}")
-            return super().nativeEvent(eventType, message)
 
-        if platform.system() == "Windows":
-            try:
-                import ctypes
-                ptr = 0
-                if message:
-                    if isinstance(message, int):
-                        ptr = message
-                    elif hasattr(message, "__int__"):
-                        ptr = int(message)
-                    else:
-                        # Fallback for sip.voidptr or capsule
-                        try:
-                            ptr = ctypes.pythonapi.PyCapsule_GetPointer(message, None)
-                        except Exception:
-                            try:
-                                ptr = int(ctypes.cast(message, ctypes.c_void_p).value or 0)
-                            except Exception:
-                                ptr = 0
-
-                if ptr:
-                    class MSG(ctypes.Structure):
-                        _fields_ = [
-                            ("hwnd", ctypes.c_void_p),
-                            ("message", ctypes.c_uint32),
-                            ("wParam", ctypes.c_void_p),
-                            ("lParam", ctypes.c_void_p),
-                            ("time", ctypes.c_uint32),
-                            ("pt", ctypes.c_long * 2),
-                        ]
-                    m = ctypes.cast(ptr, ctypes.POINTER(MSG)).contents
-                    if m.message == 0x0021:  # WM_MOUSEACTIVATE
-                        return True, 3  # MA_NOACTIVATE = 3
-            except Exception as e:
-                logger.debug(f"Error handling nativeEvent WM_MOUSEACTIVATE: {e}")
-
-        return super().nativeEvent(eventType, message)
 
     def _handle_accept(self):
         """点击 Accept：触发回调并关闭弹窗"""
