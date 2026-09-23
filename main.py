@@ -48,7 +48,7 @@ def main():
     # 检查是否有独立的最小化 Qt 顶层/父子组件诊断测试环境变量（必须在单实例检查与任何 G-Coach 业务逻辑之前运行）
     import os
     diag_mode = os.environ.get("GCOACH_POPUP_TEST", "").strip().upper()
-    if diag_mode in ("MINIMAL-TOPLEVEL", "MINIMAL-PARENTED", "POPUP-REDUCTION", "POPUP-CONSTRUCTOR"):
+    if diag_mode in ("MINIMAL-TOPLEVEL", "MINIMAL-PARENTED", "POPUP-REDUCTION", "POPUP-CONSTRUCTOR", "POPUP-SHOW-ISOLATION"):
         app = QApplication(sys.argv)
         from PyQt6.QtWidgets import QWidget
         if diag_mode == "MINIMAL-TOPLEVEL":
@@ -232,6 +232,119 @@ def main():
 
             global _popup_ctor_ref
             _popup_ctor_ref = ctor_popup
+        elif diag_mode == "POPUP-SHOW-ISOLATION":
+            print("POPUP-SHOW-ISOLATION diagnostic starting...")
+            from PyQt6.QtCore import Qt
+            from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+            from core.analysis import Finding
+            from core.ui.floating_correction import FloatingCorrectionPopup
+
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Agreement",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+
+            # Variant A — Current production behavior (with nativeEvent override)
+            print("[ShowIsolation A] before construction")
+            popup_a = FloatingCorrectionPopup(
+                finding=finding,
+                target=None,
+                on_accept=lambda f, t: None,
+                on_ignore=lambda f: None,
+                parent=None,
+            )
+            print("[ShowIsolation A] constructed")
+            print("[ShowIsolation A] before move")
+            popup_a.move(100, 100)
+            print("[ShowIsolation A] moved")
+            print("[ShowIsolation A] before show")
+            popup_a.show()
+            print("[ShowIsolation A] show returned")
+
+            # Variant B — Temporarily bypass the class's nativeEvent override by monkeypatching
+            print("[ShowIsolation B] before construction")
+            popup_b = FloatingCorrectionPopup(
+                finding=finding,
+                target=None,
+                on_accept=lambda f, t: None,
+                on_ignore=lambda f: None,
+                parent=None,
+            )
+            # Monkeypatch nativeEvent to call super().nativeEvent directly
+            popup_b.nativeEvent = lambda eventType, msg: super(FloatingCorrectionPopup, popup_b).nativeEvent(eventType, msg)
+            print("[ShowIsolation B] constructed & nativeEvent bypassed")
+            print("[ShowIsolation B] before move")
+            popup_b.move(300, 100)
+            print("[ShowIsolation B] moved")
+            print("[ShowIsolation B] before show")
+            popup_b.show()
+            print("[ShowIsolation B] show returned")
+
+            # Variant C — Bare QWidget subclass with same non-native Qt flags, layout, and content (Stage 5 equivalent)
+            print("[ShowIsolation C] before construction")
+            class SafePopupWidget(QWidget):
+                def __init__(self, finding, parent=None):
+                    super().__init__(parent)
+                    self.setWindowFlags(
+                        Qt.WindowType.FramelessWindowHint
+                        | Qt.WindowType.WindowStaysOnTopHint
+                        | Qt.WindowType.WindowDoesNotAcceptFocus
+                    )
+                    self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+                    self.setStyleSheet("""
+                        QWidget {
+                            background-color: #ffffff;
+                            color: #2c3e50;
+                            border: 1px solid #bdc3c7;
+                            border-radius: 6px;
+                            font-family: Arial, sans-serif;
+                            font-size: 13px;
+                        }
+                        QPushButton {
+                            background-color: #3498db;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            padding: 4px 10px;
+                            font-weight: bold;
+                        }
+                    """)
+                    layout = QVBoxLayout(self)
+                    layout.setContentsMargins(10, 10, 10, 10)
+                    layout.setSpacing(6)
+
+                    original = finding.original
+                    replacement = finding.replacement
+                    action_text = f"Change \"{original}\" to \"{replacement}\"" if original else f"Insert \"{replacement}\""
+                    title_label = QLabel(action_text, self)
+                    title_label.setStyleSheet("font-weight: bold; color: #2c3e50; border: none;")
+                    layout.addWidget(title_label)
+
+                    btn_layout = QHBoxLayout()
+                    btn_layout.setSpacing(6)
+                    accept_btn = QPushButton("Accept", self)
+                    btn_layout.addWidget(accept_btn)
+                    ignore_btn = QPushButton("Ignore", self)
+                    btn_layout.addWidget(ignore_btn)
+                    layout.addLayout(btn_layout)
+                    self.adjustSize()
+
+            widget_c = SafePopupWidget(finding, parent=None)
+            print("[ShowIsolation C] constructed")
+            print("[ShowIsolation C] before move")
+            widget_c.move(500, 100)
+            print("[ShowIsolation C] moved")
+            print("[ShowIsolation C] before show")
+            widget_c.show()
+            print("[ShowIsolation C] show returned")
+
+            global _popup_isolation_refs
+            _popup_isolation_refs = (popup_a, popup_b, widget_c)
 
         sys.exit(app.exec())
 
