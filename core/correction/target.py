@@ -36,6 +36,7 @@ class CorrectionTarget:
         text = getattr(snapshot, "text", "")
         t_hash = hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest() if text else ""
         meta = getattr(snapshot, "metadata", {})
+        ref = element_ref if element_ref is not None else meta.get("element_ref", None)
         return cls(
             control_id=getattr(snapshot, "control_id", ""),
             process_id=getattr(snapshot, "process_id", 0),
@@ -45,7 +46,7 @@ class CorrectionTarget:
             app_name=getattr(snapshot, "app_name", ""),
             original_text=text,
             text_hash=t_hash,
-            element_ref=element_ref,
+            element_ref=ref,
         )
 
     def validate_current_snapshot(self, current_snapshot: Any) -> bool:

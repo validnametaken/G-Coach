@@ -199,6 +199,33 @@ class TestCorrectionController(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.new_text, "Hello")
 
+    def test_background_correction_engine_element_ref_capture_and_missing_pattern_handling(self):
+        """回归测试：验证 BackgroundCorrectionEngine 在当 element_ref 为 True 但无写模式或抛出异常时不会产生虚假成功 (False Success)"""
+        from core.correction.target import CorrectionTarget
+        from core.correction.engine import BackgroundCorrectionEngine
+        from unittest.mock import MagicMock
+
+        mock_element = MagicMock()
+        mock_element.GetPattern.side_effect = Exception("UIA Pattern error")
+
+        target = CorrectionTarget(
+            control_id="ctrl-mock-element",
+            original_text="The students was happy.",
+            element_ref=mock_element,
+        )
+        finding = Finding(
+            source="harper",
+            category="grammar",
+            message="Agreement",
+            original="was",
+            replacement="were",
+            start=13,
+            end=16,
+        )
+
+        success = BackgroundCorrectionEngine.apply_correction_to_target(target, finding)
+        self.assertFalse(success)
+
     def test_ignore_and_reject_status(self):
         """测试忽略与拒绝 Finding 状态"""
         finding = Finding(

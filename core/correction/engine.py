@@ -90,19 +90,56 @@ class BackgroundCorrectionEngine:
         else:
             new_text = current_text[:start] + finding.replacement + current_text[end:]
 
-        # 5. 应用写入 (ValuePattern.SetValue)
+        # 5. 应用写入 (ValuePattern.SetValue / TextPattern)
         success = False
         try:
             if element:
                 import uiautomation as auto
-                val_pattern = element.GetPattern(auto.PatternId.ValuePattern)
-                if val_pattern and not getattr(val_pattern, "IsReadOnly", False):
-                    val_pattern.SetValue(new_text)
-                    success = True
-                    logger.info(f"Successfully applied background correction via ValuePattern to control {target.control_id}")
-                else:
-                    # 尝试通过 Keyboard / TextPattern 或模拟
-                    logger.warning("ValuePattern not available or control is readonly.")
+                applied = False
+                
+                # 尝试 1: ValuePattern
+                try:
+                    val_pattern = element.GetPattern(auto.PatternId.ValuePattern)
+                    if val_pattern and not getattr(val_pattern, "IsReadOnly", False):
+                        val_pattern.SetValue(new_text)
+                        applied = True
+                        logger.info(f"Successfully applied background correction via ValuePattern to control {target.control_id}")
+                except Exception as e:
+                    logger.debug(f"ValuePattern.SetValue failed: {e}")
+
+                # 尝试 2: TextPattern range replacement
+                if not applied:
+                    for pid in (auto.PatternId.TextPattern, auto.PatternId.TextPattern2):
+                        try:
+                            tp = element.GetPattern(pid)
+                            if tp and tp.DocumentRange:
+                                rng = tp.DocumentRange
+                                # 尝试定位到 [start:end] 范围并替换
+                                # 若直接操作整篇文档，可使用 Selection 或直接构造 range
+                                rng.Select()
+                                active_selection = tp.GetSelection()
+                                if active_selection and len(active_selection) > 0:
+                                    active_selection[0].ReplaceText(finding.replacement)
+                                    applied = True
+                                    logger.info(f"Successfully applied correction via TextPattern ReplaceText.")
+                                    break
+                        except Exception as e:
+                            logger.debug(f"TextPattern replacement failed: {e}")
+
+                # 尝试 3: 若 ValuePattern 和 TextPattern 均不可用但控件有焦点或支持 LegacyIAccessiblePattern
+                if not applied:
+                    try:
+                        acc = element.GetPattern(auto.PatternId.LegacyIAccessiblePattern)
+                        if acc and hasattr(acc, "SetValue"):
+                            acc.SetValue(new_text)
+                            applied = True
+                            logger.info("Successfully applied correction via LegacyIAccessiblePattern.")
+                    except Exception as e:
+                        logger.debug(f"LegacyIAccessiblePattern SetValue failed: {e}")
+
+                success = applied
+                if not success:
+                    logger.warning(f"No suitable writable pattern (ValuePattern/TextPattern/LegacyIAccessible) found for target control {target.control_id}.")
             else:
                 # Mock 环境直接返回成功
                 success = True
