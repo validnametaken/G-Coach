@@ -363,6 +363,57 @@ class TestUIPresenter(unittest.TestCase):
         self.assertTrue(popup.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus)
         popup.close()
 
+    def test_floating_correction_popup_accept_click_triggers_callback(self):
+        """回归测试：验证点击 FloatingCorrectionPopup 的 Accept 按钮能够正确触发 _handle_accept 并调用上层 on_accept 回调"""
+        from core.ui.floating_correction import FloatingCorrectionPopup, PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from PyQt6.QtWidgets import QApplication, QPushButton
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        finding = Finding(
+            source="Harper",
+            category="grammar",
+            message="Agreement",
+            original="was",
+            replacement="were",
+            start=0,
+            end=3,
+        )
+        target = CorrectionTarget()
+        accepted_findings = []
+        accepted_targets = []
+
+        def on_accept(f, t):
+            accepted_findings.append(f)
+            accepted_targets.append(t)
+
+        popup = FloatingCorrectionPopup(
+            finding=finding,
+            target=target,
+            on_accept=on_accept,
+            on_ignore=lambda f: None,
+            parent=None,
+        )
+
+        buttons = popup.findChildren(QPushButton)
+        accept_btn = None
+        for btn in buttons:
+            if "Accept" in btn.text():
+                accept_btn = btn
+                break
+
+        self.assertIsNotNone(accept_btn)
+        accept_btn.click()
+
+        self.assertEqual(len(accepted_findings), 1)
+        self.assertEqual(accepted_findings[0], finding)
+        self.assertEqual(accepted_targets[0], target)
+        popup.close()
+
     def test_phase_8e_floating_popup_win32_style_safety(self):
         """测试 FloatingCorrectionPopup 在 Windows 平台上的 Win32 样式修改安全防御机制"""
         from core.ui.window import PYQT_AVAILABLE
