@@ -433,33 +433,45 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
 
     def _handle_popup_accept(self, finding: Finding, target: CorrectionTarget):
         """处理浮动弹窗的 Accept 点击：通过 BackgroundCorrectionEngine 无焦点直接修改目标控件"""
+        print(f"[Phase8E Click Diagnostic] GCoachWindow._handle_popup_accept() entered for finding '{finding.original}' -> '{finding.replacement}'")
+        print(f"[Phase8E Click Diagnostic] target: {target}")
         success = BackgroundCorrectionEngine.apply_correction_to_target(target, finding)
+        print(f"[Phase8E Click Diagnostic] apply_correction_to_target returned success={success}")
         if success:
             self.statusBar().showMessage(f"Successfully applied background correction: {finding.original} → {finding.replacement}")
             finding.status = "accepted"
             if hasattr(self.monitor.text_source, "set_text"):
                 # 如果是 Mock Text Source，同时更新其内部文本并触发检查
                 current_t = getattr(self.monitor.text_source, "text", "")
+                print(f"[Phase8E Click Diagnostic] text_source has set_text, current_t='{current_t}'")
                 if current_t:
                     new_t = current_t[:finding.start] + finding.replacement + current_t[finding.end:]
+                    print(f"[Phase8E Click Diagnostic] updating text_source to '{new_t}'")
                     self.monitor.text_source.set_text(new_t)
                     self.monitor.trigger_check()
+            else:
+                print("[Phase8E Click Diagnostic] text_source has no set_text")
         else:
+            print("[Phase8E Click Diagnostic] correction failed")
+            QMessageBox.warning(self, "Correction Failed", f"Background correction failed for finding '{finding.original}'.")
             self.statusBar().showMessage(f"Background correction failed for finding '{finding.original}'.")
 
         if self.active_popup:
             self.active_popup.close()
             self.active_popup = None
             self.last_popup_finding_id = None
+            self.last_popup_finding_signature = None
 
     def _handle_popup_ignore(self, finding: Finding):
         """处理浮动弹窗的 Ignore 点击"""
+        print(f"[Phase8E Click Diagnostic] GCoachWindow._handle_popup_ignore() entered for finding '{finding.original}'")
         self.correction_controller.mark_ignored(finding)
         self.statusBar().showMessage(f"Finding ignored: {finding.original} → {finding.replacement}")
         if self.active_popup:
             self.active_popup.close()
             self.active_popup = None
             self.last_popup_finding_id = None
+            self.last_popup_finding_signature = None
 
     def closeEvent(self, event):
         """窗口关闭时确保监控器和后台线程干净停止"""

@@ -419,18 +419,32 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
 
     def _handle_accept(self):
         """点击 Accept：触发回调并关闭弹窗"""
+        print("[Phase8E Click Diagnostic] FloatingCorrectionPopup._handle_accept() entered")
         try:
             if self.on_accept:
+                print("[Phase8E Click Diagnostic] invoking on_accept callback")
                 self.on_accept(self.finding, self.target)
+                print("[Phase8E Click Diagnostic] on_accept callback completed")
+            else:
+                print("[Phase8E Click Diagnostic] warning: on_accept is None")
         except Exception as e:
             logger.error(f"Error handling floating popup accept: {e}", exc_info=True)
+            print(f"[Phase8E Click Diagnostic] Error in _handle_accept: {e}")
+        print("[Phase8E Click Diagnostic] calling self.close()")
         self.close()
 
     def _handle_ignore(self):
         """点击 Ignore：触发回调并关闭弹窗"""
+        print("[Phase8E Click Diagnostic] FloatingCorrectionPopup._handle_ignore() entered")
         try:
             if self.on_ignore:
+                print("[Phase8E Click Diagnostic] invoking on_ignore callback")
                 self.on_ignore(self.finding)
+                print("[Phase8E Click Diagnostic] on_ignore callback completed")
+            else:
+                print("[Phase8E Click Diagnostic] warning: on_ignore is None")
         except Exception as e:
             logger.error(f"Error handling floating popup ignore: {e}", exc_info=True)
+            print(f"[Phase8E Click Diagnostic] Error in _handle_ignore: {e}")
+        print("[Phase8E Click Diagnostic] calling self.close()")
         self.close()
