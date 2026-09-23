@@ -288,8 +288,8 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
 
-        # 在 Windows 平台上应用 WS_EX_NOACTIVATE (0x08000000) 扩展样式（除非配置 B 或 D 或 F 或 Q）
-        if platform.system() == "Windows" and config_mode not in ("B", "D", "F", "Q"):
+        # 在 Windows 平台上应用 WS_EX_NOACTIVATE (0x08000000) 扩展样式（除非配置 B 或 D 或 F 或 Q 或 POPUP-NATIVE-EVENT-BYPASS）
+        if platform.system() == "Windows" and config_mode not in ("B", "D", "F", "Q", "POPUP-NATIVE-EVENT-BYPASS"):
             try:
                 import ctypes
                 hwnd = int(self.winId())
