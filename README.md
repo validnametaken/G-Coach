@@ -1,6 +1,6 @@
 # G-Coach — AI Writing Coach & Real-Time Grammar Assistant / AI 写作教练与实时语法助手
 
-G-Coach is an advanced, offline-capable Windows desktop writing assistant and grammar correction tool built with PyQt6. It features real-time text monitoring across applications, unified analysis pipelines (integrating Harper and GECToR), non-activating floating correction popups (Grammarly-style), and a rich desktop interface for reviewing grammar, spelling, and style.
+Welcome to G-Coach — your intelligent, offline-capable Windows desktop writing companion built with PyQt6. Designed for seamless productivity, G-Coach features real-time text monitoring across applications, robust analysis pipelines integrating Harper and GECToR, non-activating floating correction popups (Grammarly-style), and an elegant desktop interface to elevate your grammar, spelling, and style.
 
 G-Coach 是一款基于 PyQt6 开发的高级离线优先 Windows 桌面写作教练与语法校对工具。它支持跨应用实时文本监控、统一分析流水线（集成 Harper 与 GECToR 本地引擎）、非抢焦悬浮纠正弹窗（类似 Grammarly 交互体验）以及用于审阅语法、拼写和文体风格的桌面管理界面。
 
