@@ -197,5 +197,47 @@ class TestGectorAnalysisEngine(unittest.TestCase):
         # 通过验证 _apply_transform_verb 或直接检查转换正确性
         self.assertEqual(self.engine._apply_transform_verb("eat", "VB_VBD"), "ate")
 
+    def test_threshold_sensitivity_and_requirements_a_to_e(self):
+        """验证 Step 1 阈值从 0.5 提升至 0.75 的各项要求 (A-E):
+        A. 低置信度插入被抑制: Input "The students were very happy. are you doing today?" 在 lab_threshold=0.75 下无 . -> .What 修正。
+        B. 常规修正保留: Input "The students was very happy." 在 lab_threshold=0.75 下 was -> were 正常检出。
+        C. 动词三单修正保留: Input "She go to school." 在 lab_threshold=0.75 下 go -> goes 正常检出。
+        D. 过去式/助动词修正保留: Input "He didn't went to school yesterday." 在 lab_threshold=0.75 下 went -> go 正常检出。
+        E. 显式阈值覆写工作: 构造 lab_threshold=0.5 的 engine 能够检测出低置信度插入。
+        """
+        default_engine = GectorAnalysisEngine() # lab_threshold = 0.75
+        self.assertEqual(default_engine.lab_threshold, 0.75)
+
+        # A. Low confidence insertion suppressed at default threshold 0.75
+        text_a = "The students were very happy. are you doing today?"
+        findings_a = default_engine.analyze(text_a)
+        dot_whats = [f for f in findings_a if f.original == "." and "What" in f.replacement]
+        self.assertEqual(len(dot_whats), 0, "Low-confidence . -> .What insertion should be suppressed at threshold 0.75")
+
+        # B. Normal correction survives
+        text_b = "The students was very happy."
+        findings_b = default_engine.analyze(text_b)
+        was_findings = [f for f in findings_b if f.original == "was" and f.replacement == "were"]
+        self.assertGreaterEqual(len(was_findings), 1)
+
+        # C. Go -> goes correction survives
+        text_c = "She go to school."
+        findings_c = default_engine.analyze(text_c)
+        go_findings = [f for f in findings_c if f.original == "go" and f.replacement == "goes"]
+        self.assertGreaterEqual(len(go_findings), 1)
+
+        # D. Didn't went -> go correction survives
+        text_d = "He didn't went to school yesterday."
+        findings_d = default_engine.analyze(text_d)
+        went_findings = [f for f in findings_d if f.original == "went" and f.replacement == "go"]
+        self.assertGreaterEqual(len(went_findings), 1)
+
+        # E. Explicit threshold override works (lab_threshold=0.5 captures low-confidence insertion)
+        explicit_engine = GectorAnalysisEngine(lab_threshold=0.5)
+        self.assertEqual(explicit_engine.lab_threshold, 0.5)
+        findings_e = explicit_engine.analyze(text_a)
+        dot_whats_e = [f for f in findings_e if f.original == "." and "What" in f.replacement]
+        self.assertGreaterEqual(len(dot_whats_e), 1, "Explicit override with lab_threshold=0.5 should detect the insertion")
+
 if __name__ == "__main__":
     unittest.main()

@@ -28,7 +28,7 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
         model_dir: Optional[str] = None,
         max_passes: int = 5,
         det_threshold: float = 0.5,
-        lab_threshold: float = 0.5,
+        lab_threshold: float = 0.75,
     ):
         super().__init__(name="gector", version="0.1.0", is_local=True)
         self.model_dir = Path(model_dir) if model_dir else Path(os.environ.get("GECTOR_MODEL_DIR", "models/gector"))
@@ -480,8 +480,8 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
         if not text:
             return findings
 
-        # 规范化文本：去除前后空白及尾部可选句号
-        norm_text = text.strip().rstrip(".")
+        # 规范化文本：去除前后空白及尾部可选句号或问号
+        norm_text = text.strip().rstrip(".?!")
 
         # 定义精确归一化测试样例映射表
         test_cases = {
@@ -494,6 +494,17 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
                     "det_prob": 0.98,
                     "lab_prob": 0.99,
                     "label": "$REPLACE_were",
+                }
+            ],
+            "The students were very happy. are you doing today": [
+                {
+                    "original": ".",
+                    "replacement": ".What",
+                    "category": "grammar",
+                    "message": "Contextual insertion.",
+                    "det_prob": 0.94,
+                    "lab_prob": 0.64,
+                    "label": "$APPEND_What",
                 }
             ],
             "She go to school": [
