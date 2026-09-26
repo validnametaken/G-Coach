@@ -185,6 +185,11 @@ class BackgroundCorrectionEngine:
 
                 if not success:
                     logger.warning(f"No suitable writable pattern (ValuePattern/TextPattern/LegacyIAccessible) found for target control {target.control_id}.")
+
+                # 尝试 4: Scintilla / Notepad++ Win32 HWND fallback (Phase 8G)
+                if not success and BackgroundCorrectionEngine._is_scintilla_target(target, element):
+                    logger.info("Diagnostic: UIA write-back failed or unsupported; initiating Scintilla fallback for Notepad++ target.")
+                    success = BackgroundCorrectionEngine._apply_scintilla_fallback(target, finding, current_text)
             else:
                 logger.warning(f"Cannot apply correction: No UIA element reference available for target control {target.control_id}.")
                 success = False
@@ -205,3 +210,103 @@ class BackgroundCorrectionEngine:
             return None
         except Exception:
             return None
+
+    @staticmethod
+    def _is_scintilla_target(target: CorrectionTarget, element: Any) -> bool:
+        """判断目标是否为 Notepad++ / Scintilla 控件"""
+        if not target:
+            return False
+        app_name = (target.app_name or "").lower()
+        if "notepad++" in app_name or "notepad++.exe" in app_name:
+            return True
+        
+        hwnd = target.hwnd
+        if not hwnd and element:
+            try:
+                hwnd = int(getattr(element, "NativeWindowHandle", 0))
+            except Exception:
+                hwnd = 0
+                
+        if hwnd and platform.system() == "Windows":
+            try:
+                import ctypes
+                buf = ctypes.create_unicode_buffer(256)
+                ctypes.windll.user32.GetClassNameW(hwnd, buf, 256)
+                if "scintilla" in buf.value.lower():
+                    return True
+            except Exception:
+                pass
+                
+        if element:
+            try:
+                cls_name = str(getattr(element, "ClassName", ""))
+                if "scintilla" in cls_name.lower():
+                    return True
+            except Exception:
+                pass
+                
+        return False
+
+    @staticmethod
+    def _apply_scintilla_fallback(target: CorrectionTarget, finding: Finding, current_text: str) -> bool:
+        """使用 Win32 SendMessage 与 Scintilla 消息 (SCI_SETSEL, SCI_REPLACESEL) 精确替换原 finding 范围文本"""
+        if platform.system() != "Windows":
+            logger.debug("Scintilla fallback skipped: not Windows platform.")
+            return False
+            
+        hwnd = target.hwnd
+        if not hwnd and target.element_ref:
+            try:
+                hwnd = int(getattr(target.element_ref, "NativeWindowHandle", 0))
+            except Exception:
+                hwnd = 0
+        if not hwnd:
+            logger.warning("Scintilla fallback failed: No valid HWND found for Scintilla target.")
+            return False
+            
+        start = finding.start
+        end = finding.end
+        replacement = finding.replacement
+        
+        if start < 0 or end < start or end > len(current_text):
+            logger.warning(f"Scintilla fallback rejection: offset range [{start}, {end}] out of bounds for text of length {len(current_text)}.")
+            return False
+            
+        if finding.original != "" and current_text[start:end] != finding.original:
+            logger.warning(f"Scintilla fallback rejection: source text at [{start}:{end}] is '{current_text[start:end]}', expected '{finding.original}'. Text changed.")
+            return False
+            
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            
+            SCI_SETSEL = 2160
+            SCI_REPLACESEL = 2170
+            
+            logger.info(f"Diagnostic: Attempting Scintilla Win32 fallback via HWND {hwnd} (SCI_SETSEL({start}, {end}), SCI_REPLACESEL)")
+            
+            # 1. Select the exact range
+            user32.SendMessageW(hwnd, SCI_SETSEL, ctypes.c_int(start), ctypes.c_int(end))
+            
+            # 2. Replace selection
+            success_replaced = False
+            try:
+                res = user32.SendMessageW(hwnd, SCI_REPLACESEL, 0, ctypes.c_wchar_p(replacement))
+                success_replaced = True
+            except Exception as e_w:
+                logger.debug(f"SendMessageW SCI_REPLACESEL raised exception: {e_w}, trying SendMessageA")
+                try:
+                    rep_bytes = replacement.encode('utf-8')
+                    res = user32.SendMessageA(hwnd, SCI_REPLACESEL, 0, rep_bytes)
+                    success_replaced = True
+                except Exception as e_a:
+                    logger.debug(f"SendMessageA SCI_REPLACESEL raised exception: {e_a}")
+                    raise
+                    
+            if success_replaced:
+                logger.info(f"Successfully applied Scintilla correction via Win32 messages to HWND {hwnd}.")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Failed to execute Scintilla Win32 fallback correction: {e}", exc_info=True)
+            return False
