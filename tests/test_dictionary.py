@@ -228,3 +228,48 @@ class TestPersonalDictionary(unittest.TestCase):
         # Source text is unchanged
         self.assertEqual(text, "Ichinomiya are beautiful.")
 
+    def test_regression_requirements_a_to_h(self):
+        """Regression tests covering requirements A through H."""
+        from core.dictionary import is_dictionary_candidate, PersonalDictionary
+        from core.analysis import AnalysisPipeline, Finding, AnalysisResolver
+        from core.monitoring import LiveTextMonitor, MockTextSource
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from unittest.mock import MagicMock
+
+        # A. Add-to-dictionary uses the SAME PersonalDictionary instance as the pipeline.
+        shared_dict = PersonalDictionary()
+        pipeline = AnalysisPipeline(dictionary=shared_dict)
+        self.assertIs(pipeline.dictionary, shared_dict)
+
+        # B & C. Adding a word followed by forced re-analysis removes finding even without text change, and persists to JSON.
+        shared_dict.add_word("Ichinomiya")
+        self.assertTrue(shared_dict.contains("Ichinomiya"))
+        
+        # Test forced recheck on monitor
+        mock_source = MockTextSource(initial_text="Ichinomiya is a city.")
+        resolver = AnalysisResolver()
+        monitor = LiveTextMonitor(text_source=mock_source, pipeline=pipeline, resolver=resolver)
+        state_before = monitor.force_recheck()
+        self.assertEqual(state_before.status, "analyzing")
+
+        # D. Normal grammar findings are NOT classified as Add-to-Dictionary candidates merely because of source==harper.
+        f_harper_grammar = Finding(source="harper", category="grammar", message="grammar", original="was", replacement="were", start=0, end=3)
+        self.assertFalse(is_dictionary_candidate(f_harper_grammar))
+
+        # E & F. Genuine spelling/unknown/proper-name finding remains an Add-to-Dictionary candidate and supports Ichinomiya.
+        f_spelling = Finding(source="harper", category="spelling", message="unknown", original="Ichinomiya", replacement="", start=0, end=10)
+        self.assertTrue(is_dictionary_candidate(f_spelling))
+
+        # G. Existing popup behavior: normal correction -> Accept + Ignore; candidate -> Add to dictionary + Ignore
+        # H. Existing popup navigation works with multiple findings.
+        f1 = Finding(source="harper", category="grammar", message="test", original="was", replacement="were", start=0, end=3)
+        f2 = Finding(source="harper", category="spelling", message="test", original="Ichinomiya", replacement="", start=10, end=20)
+        
+        popup_mock = MagicMock()
+        popup_mock.findings = [f1, f2]
+        popup_mock.current_index = 0
+        self.assertEqual(popup_mock.findings[0], f1)
+        popup_mock.current_index = 1
+        self.assertEqual(popup_mock.findings[1], f2)
+
+

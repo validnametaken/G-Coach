@@ -503,19 +503,26 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
             self.last_popup_finding_signature = None
 
     def _handle_popup_add_to_dict(self, finding: Finding):
-        """处理浮动弹窗或主界面的 Add to dictionary 点击：将原词加入个人词典，不修改文本，并触发重新检查"""
+        """处理浮动弹窗或主界面的 Add to dictionary 点击：将原词加入共享个人词典，不修改文本，并强制触发重新分析检查"""
         print(f"[Phase8F.1 Click Diagnostic] GCoachWindow._handle_popup_add_to_dict() entered for finding '{finding.original}'")
         if not finding or not finding.original:
             return
         word = finding.original.strip()
         if word:
-            p_dict = PersonalDictionary()
+            # 使用与 AnalysisPipeline 共享的 PersonalDictionary 实例
+            p_dict = None
+            if self.monitor and hasattr(self.monitor, "pipeline") and hasattr(self.monitor.pipeline, "dictionary"):
+                p_dict = self.monitor.pipeline.dictionary
+            if not p_dict:
+                p_dict = PersonalDictionary()
+            
             added = p_dict.add_word(word)
-            logger.info(f"Added word to personal dictionary from UI: '{word}' (added={added})")
+            logger.info(f"Added word to shared personal dictionary from UI: '{word}' (added={added})")
             self.statusBar().showMessage(f"Added '{word}' to Personal Dictionary.")
-            if hasattr(self.monitor, "trigger_check"):
-                self.monitor.trigger_check()
-            elif hasattr(self.monitor, "text_source") and hasattr(self.monitor.text_source, "set_text"):
+            
+            if self.monitor and hasattr(self.monitor, "force_recheck"):
+                self.monitor.force_recheck()
+            elif self.monitor and hasattr(self.monitor, "trigger_check"):
                 self.monitor.trigger_check()
 
         if self.active_popup:
@@ -571,8 +578,9 @@ def main():
         logger.error("Cannot launch G-Coach UI: PyQt6 is not available.")
         sys.exit(1)
 
-    # 2. 创建分析管道与引擎
-    pipeline = AnalysisPipeline()
+    # 2. 创建共享词典与分析管道
+    shared_dictionary = PersonalDictionary()
+    pipeline = AnalysisPipeline(dictionary=shared_dictionary)
     pipeline.register_engine(HarperAnalysisEngine())
     pipeline.register_engine(GectorAnalysisEngine())
 

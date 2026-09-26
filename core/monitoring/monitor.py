@@ -112,6 +112,25 @@ class LiveTextMonitor:
         """手动触发一次文本捕获和检查（主要用于单次测试或事件驱动触发）"""
         return self._poll_once()
 
+    def force_recheck(self) -> Optional[MonitorState]:
+        """强制对当前文本重新执行分析（即使文本未发生变化），用于词典更新等场景"""
+        with self._lock:
+            gen_to_analyze = self._current_generation + 1
+            self._current_generation = gen_to_analyze
+            text_to_analyze = self._last_captured_text
+            self._state.generation = gen_to_analyze
+            self._state.status = "analyzing"
+            self._analyzing_generation = gen_to_analyze
+
+            worker = threading.Thread(
+                target=self._run_analysis_async,
+                args=(gen_to_analyze, text_to_analyze),
+                daemon=True,
+            )
+            worker.start()
+            logger.info(f"Forced re-check triggered for gen {gen_to_analyze}.")
+        return self.get_state()
+
     def _monitor_loop(self) -> None:
         """后台监控与防抖循环"""
         import os
