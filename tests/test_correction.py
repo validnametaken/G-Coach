@@ -277,6 +277,67 @@ class TestCorrectionController(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn("has conflicting alternative suggestions", result.error_message)
 
+    def test_scintilla_target_detection_and_fallback_behavior(self):
+        """测试 Phase 8G: Notepad++/Scintilla 目标检测、非 Scintilla 目标隔离、范围精确计算与降级失败处理"""
+        from core.correction.target import CorrectionTarget
+        from core.correction.engine import BackgroundCorrectionEngine
+        from unittest.mock import MagicMock, patch
+
+        # 1. Scintilla target detection
+        target_npp = CorrectionTarget(
+            control_id="npp-1",
+            app_name="notepad++.exe",
+            hwnd=12345,
+            original_text="Hello world"
+        )
+        self.assertTrue(BackgroundCorrectionEngine._is_scintilla_target(target_npp, None))
+
+        # 2. Non-Scintilla targets do not use the fallback
+        target_tg = CorrectionTarget(
+            control_id="tg-1",
+            app_name="Telegram.exe",
+            hwnd=54321,
+            original_text="Hello world"
+        )
+        self.assertFalse(BackgroundCorrectionEngine._is_scintilla_target(target_tg, None))
+
+        # 3. Exact replacement range & stale text rejection in Scintilla fallback
+        finding = Finding(
+            source="harper",
+            category="grammar",
+            message="Fix",
+            original="world",
+            replacement="universe",
+            start=6,
+            end=11,
+        )
+        # Stale text: text at [6:11] is not "world"
+        stale_text = "Hello earth"
+        success_stale = BackgroundCorrectionEngine._apply_scintilla_fallback(target_npp, finding, stale_text)
+        self.assertFalse(success_stale)
+
+        # 4. Fallback failure returns False rather than success when platform is non-Windows or HWND invalid
+        target_no_hwnd = CorrectionTarget(
+            control_id="npp-2",
+            app_name="notepad++.exe",
+            hwnd=0,
+            original_text="Hello world"
+        )
+        success_nohwnd = BackgroundCorrectionEngine._apply_scintilla_fallback(target_no_hwnd, finding, "Hello world")
+        self.assertFalse(success_nohwnd)
+
+        # 5. Existing UIA behavior remains unchanged for non-Scintilla / standard targets
+        mock_element = MagicMock()
+        mock_element.GetPattern.return_value = None
+        target_std = CorrectionTarget(
+            control_id="std-1",
+            app_name="App.exe",
+            element_ref=mock_element,
+            original_text="Hello world"
+        )
+        res_std = BackgroundCorrectionEngine.apply_correction_to_target(target_std, finding)
+        self.assertFalse(res_std)
+
 
 if __name__ == "__main__":
     unittest.main()
