@@ -212,13 +212,57 @@ class BackgroundCorrectionEngine:
             return None
 
     @staticmethod
+    def _resolve_scintilla_hwnd(hwnd: int) -> Optional[int]:
+        """解析实际的 Scintilla 编辑器 HWND。
+        - 如果 hwnd 本身为 Scintilla，返回 hwnd。
+        - 否则优先通过 FindWindowExW 或枚举子窗口查找类名严格为 "Scintilla" 的窗口。
+        - 找不到返回 None。
+        """
+        if not hwnd or platform.system() != "Windows":
+            return None
+        try:
+            import ctypes
+            if not hasattr(ctypes, "windll"):
+                return None
+            user32 = ctypes.windll.user32
+            
+            buf = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, buf, 256)
+            if "scintilla" in buf.value.lower():
+                return int(hwnd)
+                
+            # 1. 优先尝试 FindWindowExW 直接查找子窗口
+            child = user32.FindWindowExW(hwnd, 0, "Scintilla", None)
+            if child:
+                return int(child)
+                
+            # 2. 否则枚举后代窗口
+            found_hwnd = None
+            
+            @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+            def enum_child_proc(child_hwnd, lparam):
+                nonlocal found_hwnd
+                cbuf = ctypes.create_unicode_buffer(256)
+                user32.GetClassNameW(child_hwnd, cbuf, 256)
+                if "scintilla" in cbuf.value.lower():
+                    found_hwnd = int(child_hwnd)
+                    return False
+                return True
+                
+            user32.EnumChildWindows(hwnd, enum_child_proc, 0)
+            if found_hwnd:
+                return found_hwnd
+                
+            return None
+        except Exception as e:
+            logger.debug(f"Error resolving Scintilla HWND from {hwnd}: {e}")
+            return None
+
+    @staticmethod
     def _is_scintilla_target(target: CorrectionTarget, element: Any) -> bool:
-        """判断目标是否为 Notepad++ / Scintilla 控件"""
+        """判断目标是否为 Notepad++ / Scintilla 控件（严禁仅凭 app_name='notepad++.exe' 判定，必须能成功解析出 Scintilla HWND 或类名）"""
         if not target:
             return False
-        app_name = (target.app_name or "").lower()
-        if "notepad++" in app_name or "notepad++.exe" in app_name:
-            return True
         
         hwnd = target.hwnd
         if not hwnd and element:
@@ -227,16 +271,10 @@ class BackgroundCorrectionEngine:
             except Exception:
                 hwnd = 0
                 
-        if hwnd and platform.system() == "Windows":
-            try:
-                import ctypes
-                buf = ctypes.create_unicode_buffer(256)
-                ctypes.windll.user32.GetClassNameW(hwnd, buf, 256)
-                if "scintilla" in buf.value.lower():
-                    return True
-            except Exception:
-                pass
-                
+        scintilla_hwnd = BackgroundCorrectionEngine._resolve_scintilla_hwnd(hwnd)
+        if scintilla_hwnd:
+            return True
+            
         if element:
             try:
                 cls_name = str(getattr(element, "ClassName", ""))
@@ -249,7 +287,9 @@ class BackgroundCorrectionEngine:
 
     @staticmethod
     def _apply_scintilla_fallback(target: CorrectionTarget, finding: Finding, current_text: str) -> bool:
-        """使用 Win32 SendMessage 与 Scintilla 消息 (SCI_SETSEL, SCI_REPLACESEL) 精确替换原 finding 范围文本"""
+        """使用 Win32 SendMessage 与 Scintilla 消息 (SCI_SETSEL, SCI_REPLACESEL, SCI_GETTEXT, SCI_GETTEXTLENGTH)
+        精确替换原 finding 范围文本，并通过硬后置写入验证 (Hard Post-Write Verification) 确保文档实际变更。
+        """
         if platform.system() != "Windows":
             logger.debug("Scintilla fallback skipped: not Windows platform.")
             return False
@@ -260,53 +300,84 @@ class BackgroundCorrectionEngine:
                 hwnd = int(getattr(target.element_ref, "NativeWindowHandle", 0))
             except Exception:
                 hwnd = 0
-        if not hwnd:
-            logger.warning("Scintilla fallback failed: No valid HWND found for Scintilla target.")
+                
+        scintilla_hwnd = BackgroundCorrectionEngine._resolve_scintilla_hwnd(hwnd)
+        if not scintilla_hwnd:
+            logger.warning(f"Scintilla fallback failed: No Scintilla HWND could be resolved from target hwnd {hwnd}.")
             return False
             
         start = finding.start
         end = finding.end
         replacement = finding.replacement
         
-        if start < 0 or end < start or end > len(current_text):
-            logger.warning(f"Scintilla fallback rejection: offset range [{start}, {end}] out of bounds for text of length {len(current_text)}.")
-            return False
-            
-        if finding.original != "" and current_text[start:end] != finding.original:
-            logger.warning(f"Scintilla fallback rejection: source text at [{start}:{end}] is '{current_text[start:end]}', expected '{finding.original}'. Text changed.")
-            return False
-            
         try:
             import ctypes
             user32 = ctypes.windll.user32
             
+            SCI_GETTEXTLENGTH = 2183
+            SCI_GETTEXT = 2182
             SCI_SETSEL = 2160
             SCI_REPLACESEL = 2170
             
-            logger.info(f"Diagnostic: Attempting Scintilla Win32 fallback via HWND {hwnd} (SCI_SETSEL({start}, {end}), SCI_REPLACESEL)")
+            # 1. 实时读取 Scintilla 文档内容进行前置校验 / 过时防护
+            length = user32.SendMessageW(scintilla_hwnd, SCI_GETTEXTLENGTH, 0, 0)
+            if length <= 0:
+                logger.warning("Scintilla fallback failed: Live document length is 0 or invalid.")
+                return False
+                
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.SendMessageW(scintilla_hwnd, SCI_GETTEXT, length + 1, buf)
+            live_text = buf.value
             
-            # 1. Select the exact range
-            user32.SendMessageW(hwnd, SCI_SETSEL, ctypes.c_int(start), ctypes.c_int(end))
+            if start < 0 or end < start or end > len(live_text):
+                logger.warning(f"Scintilla fallback rejection: offset range [{start}, {end}] out of bounds for live text of length {len(live_text)}.")
+                return False
+                
+            if finding.original != "" and live_text[start:end] != finding.original:
+                logger.warning(f"Scintilla fallback rejection: live text at [{start}:{end}] is '{live_text[start:end]}', expected '{finding.original}'. Text changed (stale).")
+                return False
+                
+            logger.info(f"Diagnostic: Applying Scintilla Win32 fallback via resolved HWND {scintilla_hwnd} (SCI_SETSEL({start}, {end}), SCI_REPLACESEL)")
             
-            # 2. Replace selection
+            # 2. 选择范围并替换
+            user32.SendMessageW(scintilla_hwnd, SCI_SETSEL, ctypes.c_int(start), ctypes.c_int(end))
+            
             success_replaced = False
             try:
-                res = user32.SendMessageW(hwnd, SCI_REPLACESEL, 0, ctypes.c_wchar_p(replacement))
+                user32.SendMessageW(scintilla_hwnd, SCI_REPLACESEL, 0, ctypes.c_wchar_p(replacement))
                 success_replaced = True
             except Exception as e_w:
                 logger.debug(f"SendMessageW SCI_REPLACESEL raised exception: {e_w}, trying SendMessageA")
                 try:
                     rep_bytes = replacement.encode('utf-8')
-                    res = user32.SendMessageA(hwnd, SCI_REPLACESEL, 0, rep_bytes)
+                    user32.SendMessageA(scintilla_hwnd, SCI_REPLACESEL, 0, rep_bytes)
                     success_replaced = True
                 except Exception as e_a:
                     logger.debug(f"SendMessageA SCI_REPLACESEL raised exception: {e_a}")
                     raise
                     
-            if success_replaced:
-                logger.info(f"Successfully applied Scintilla correction via Win32 messages to HWND {hwnd}.")
-                return True
-            return False
+            if not success_replaced:
+                logger.warning("Scintilla fallback failed: SCI_REPLACESEL execution failed.")
+                return False
+                
+            # 3. 硬后置写入验证 (Hard Post-Write Verification)
+            new_length = user32.SendMessageW(scintilla_hwnd, SCI_GETTEXTLENGTH, 0, 0)
+            new_buf = ctypes.create_unicode_buffer(new_length + 1)
+            user32.SendMessageW(scintilla_hwnd, SCI_GETTEXT, new_length + 1, new_buf)
+            post_live_text = new_buf.value
+            
+            expected_end = start + len(replacement)
+            if expected_end < 0 or expected_end > len(post_live_text):
+                logger.warning(f"Scintilla post-write verification failed: Expected end offset {expected_end} out of bounds for post-write text of length {len(post_live_text)}.")
+                return False
+                
+            actual_inserted = post_live_text[start:expected_end]
+            if actual_inserted != replacement:
+                logger.warning(f"Scintilla post-write verification failed: Expected replacement '{replacement}' at [{start}:{expected_end}], but found '{actual_inserted}' in live buffer.")
+                return False
+                
+            logger.info(f"Successfully verified Scintilla correction post-write: '{actual_inserted}' at range [{start}:{expected_end}].")
+            return True
         except Exception as e:
-            logger.error(f"Failed to execute Scintilla Win32 fallback correction: {e}", exc_info=True)
+            logger.error(f"Failed to execute Scintilla Win32 fallback correction and verification: {e}", exc_info=True)
             return False
