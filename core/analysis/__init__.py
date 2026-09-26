@@ -7,6 +7,7 @@ from .engine import BaseAnalysisEngine
 from .pipeline import AnalysisPipeline
 from .harper import HarperAnalysisEngine
 from .gector import GectorAnalysisEngine
+from .symspell import SymSpellAnalysisEngine
 from .resolver import AnalysisResolver
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     "AnalysisPipeline",
     "HarperAnalysisEngine",
     "GectorAnalysisEngine",
+    "SymSpellAnalysisEngine",
     "AnalysisResolver",
 ]
