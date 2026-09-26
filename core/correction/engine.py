@@ -186,8 +186,8 @@ class BackgroundCorrectionEngine:
                 if not success:
                     logger.warning(f"No suitable writable pattern (ValuePattern/TextPattern/LegacyIAccessible) found for target control {target.control_id}.")
             else:
-                # Mock 环境直接返回成功
-                success = True
+                logger.warning(f"Cannot apply correction: No UIA element reference available for target control {target.control_id}.")
+                success = False
         except Exception as e:
             logger.error(f"Failed to set value on target control via UIA: {e}", exc_info=True)
             success = False
