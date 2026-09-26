@@ -394,20 +394,8 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
             self.active_popup.show_at(popup_x, popup_y)
             print(f"[Phase8E diagnostic] Popup shown")
         else:
-            # 弹窗已存在且 signature 相同，复用现有弹窗并记录其状态供诊断观察
-            if self.active_popup:
-                print(
-                    f"[Phase8E Popup State (Poll Reuse)] isVisible={self.active_popup.isVisible()}, "
-                    f"isHidden={self.active_popup.isHidden()}, "
-                    f"isEnabled={self.active_popup.isEnabled()}, "
-                    f"isWindow={self.active_popup.isWindow()}, "
-                    f"parent={self.active_popup.parent()}, "
-                    f"objectName={self.active_popup.objectName()}, "
-                    f"geometry={self.active_popup.geometry()}, "
-                    f"pos={self.active_popup.pos()}, "
-                    f"size={self.active_popup.size()}, "
-                    f"windowFlags={self.active_popup.windowFlags()}"
-                )
+            # 弹窗已存在且 signature 相同，复用现有弹窗
+            pass
 
     def _inject_test_popup_isolation(self):
         """隔离测试 1：POPUP-ONLY 确定性注入 Finding 并调用 _sync_floating_popup"""
