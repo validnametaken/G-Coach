@@ -9,6 +9,7 @@ from .harper import HarperAnalysisEngine
 from .gector import GectorAnalysisEngine
 from .symspell import SymSpellAnalysisEngine
 from .resolver import AnalysisResolver
+from .policy import CorrectionPolicy
 
 __all__ = [
     "Finding",
@@ -18,4 +19,5 @@ __all__ = [
     "GectorAnalysisEngine",
     "SymSpellAnalysisEngine",
     "AnalysisResolver",
+    "CorrectionPolicy",
 ]
