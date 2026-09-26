@@ -40,6 +40,7 @@ from core.analysis import Finding
 from core.correction import CorrectionController
 from core.correction.target import CorrectionTarget
 from core.correction.engine import BackgroundCorrectionEngine
+from core.dictionary import is_dictionary_candidate, PersonalDictionary
 from .floating_correction import FloatingCorrectionPopup
 from .presenter import UIPresenter
 
@@ -153,12 +154,17 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
         self.details_text_edit.setPlaceholderText("Select a finding on the left to inspect details, metadata, confidence, or multi-engine conflicts.")
         details_layout.addWidget(self.details_text_edit)
 
-        # Phase 7: Interactive Correction Actions (Accept / Ignore)
+        # Phase 7: Interactive Correction Actions (Accept / Add to Dictionary / Ignore)
         actions_layout = QHBoxLayout()
         self.btn_accept = QPushButton("Accept Correction", self)
         self.btn_accept.setEnabled(False)
         self.btn_accept.clicked.connect(self._on_accept_clicked)
         actions_layout.addWidget(self.btn_accept)
+
+        self.btn_add_to_dict = QPushButton("Add to Dictionary", self)
+        self.btn_add_to_dict.setEnabled(False)
+        self.btn_add_to_dict.clicked.connect(self._on_add_to_dict_clicked)
+        actions_layout.addWidget(self.btn_add_to_dict)
 
         self.btn_ignore = QPushButton("Ignore Finding", self)
         self.btn_ignore.setEnabled(False)
@@ -260,16 +266,23 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
         if not selected_items:
             self.details_text_edit.clear()
             self.btn_accept.setEnabled(False)
+            self.btn_add_to_dict.setEnabled(False)
             self.btn_ignore.setEnabled(False)
             return
-
-        self.btn_accept.setEnabled(True)
-        self.btn_ignore.setEnabled(True)
 
         item = selected_items[0]
         finding: Finding = item.data(Qt.ItemDataRole.UserRole)
         if not finding:
             return
+
+        is_cand = is_dictionary_candidate(finding)
+        if is_cand:
+            self.btn_add_to_dict.setEnabled(True)
+            self.btn_accept.setEnabled(False)
+        else:
+            self.btn_add_to_dict.setEnabled(False)
+            self.btn_accept.setEnabled(True)
+        self.btn_ignore.setEnabled(True)
 
         details = UIPresenter.format_finding_details(finding)
         
@@ -406,6 +419,7 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
                 on_accept=self._handle_popup_accept,
                 on_ignore=self._handle_popup_ignore,
                 on_navigate=handle_navigate,
+                on_add_to_dict=self._handle_popup_add_to_dict,
                 parent=popup_parent,
             )
             print(f"[Phase8E diagnostic] Multi-finding popup constructed (total: {current_findings_count}, index: {active_index})")
@@ -487,6 +501,44 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
             self.active_popup = None
             self.last_popup_finding_id = None
             self.last_popup_finding_signature = None
+
+    def _handle_popup_add_to_dict(self, finding: Finding):
+        """处理浮动弹窗或主界面的 Add to dictionary 点击：将原词加入个人词典，不修改文本，并触发重新检查"""
+        print(f"[Phase8F.1 Click Diagnostic] GCoachWindow._handle_popup_add_to_dict() entered for finding '{finding.original}'")
+        if not finding or not finding.original:
+            return
+        word = finding.original.strip()
+        if word:
+            p_dict = PersonalDictionary()
+            added = p_dict.add_word(word)
+            logger.info(f"Added word to personal dictionary from UI: '{word}' (added={added})")
+            self.statusBar().showMessage(f"Added '{word}' to Personal Dictionary.")
+            if hasattr(self.monitor, "trigger_check"):
+                self.monitor.trigger_check()
+            elif hasattr(self.monitor, "text_source") and hasattr(self.monitor.text_source, "set_text"):
+                self.monitor.trigger_check()
+
+        if self.active_popup:
+            self.active_popup.close()
+            self.active_popup = None
+            self.last_popup_finding_id = None
+            self.last_popup_finding_signature = None
+
+    def _on_add_to_dict_clicked(self):
+        """主界面点击 Add to Dictionary 按钮"""
+        selected_items = self.findings_list_widget.selectedItems()
+        if not selected_items:
+            return
+        item = selected_items[0]
+        finding: Finding = item.data(Qt.ItemDataRole.UserRole)
+        if not finding or not finding.original:
+            return
+        self._handle_popup_add_to_dict(finding)
+        row = self.findings_list_widget.row(item)
+        self.findings_list_widget.takeItem(row)
+        self.details_text_edit.clear()
+        self.btn_add_to_dict.setEnabled(False)
+        self.btn_ignore.setEnabled(False)
 
     def closeEvent(self, event):
         """窗口关闭时确保监控器和后台线程干净停止"""

@@ -7,7 +7,7 @@ to prevent false findings from local analysis engines.
 import json
 import logging
 from pathlib import Path
-from typing import List, Set, Optional
+from typing import List, Set, Optional, Any
 
 logger = logging.getLogger(__name__)
 
@@ -103,3 +103,35 @@ class PersonalDictionary:
     def words(self) -> List[str]:
         """返回词典中所有单词的排序列表。"""
         return sorted(list(self._words))
+
+
+def is_dictionary_candidate(finding: Any) -> bool:
+    """判断一个 Finding 是否适合提供 'Add to dictionary' 操作。
+
+    规则：
+    - 有有效替换文本的普通纠错（如 was->were, go->goes, whatare->what are, a->an）不是词典候选。
+    - 标点符号不是词典候选。
+    - 无替换文本（如 Harper 的 spelling/unknown 发现）或专为拼写/未知词/词汇设置的发现是词典候选。
+    """
+    if not finding or not getattr(finding, "original", None):
+        return False
+    
+    replacement = getattr(finding, "replacement", "")
+    if replacement and replacement.strip():
+        return False
+
+    category = str(getattr(finding, "category", "")).lower()
+    source = str(getattr(finding, "source", "")).lower()
+    original = str(getattr(finding, "original", ""))
+
+    if "punct" in category or original in [".", ",", "!", "?", ";", ":"]:
+        return False
+
+    if source == "harper" or category in ["spelling", "unknown", "style", "vocabulary"]:
+        return True
+
+    if not replacement or not replacement.strip():
+        return True
+
+    return False
+

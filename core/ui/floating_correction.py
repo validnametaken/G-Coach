@@ -7,6 +7,7 @@ G-Coach Floating Correction Popup (PyQt6) - Phase 8E
 import logging
 import platform
 from typing import Optional, Callable, Any, Tuple, Union, List
+from core.dictionary import is_dictionary_candidate
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         on_accept: Callable[[Any, Any], None],
         on_ignore: Callable[[Any], None],
         on_navigate: Optional[Callable[[int], None]] = None,
+        on_add_to_dict: Optional[Callable[[Any], None]] = None,
         parent: Optional[QWidget] = None,
     ):
         if not PYQT_AVAILABLE:
@@ -54,6 +56,7 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         self.on_accept = on_accept
         self.on_ignore = on_ignore
         self.on_navigate = on_navigate
+        self.on_add_to_dict = on_add_to_dict
 
         import os
         config_mode = os.environ.get("GCOACH_POPUP_TEST", "A").strip().upper()
@@ -371,13 +374,18 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         self.title_label.setWordWrap(True)
         layout.addWidget(self.title_label)
 
-        # 按钮行 (Accept / Ignore)
+        # 按钮行 (Accept / Add to dictionary / Ignore)
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(6)
 
         self.accept_btn = QPushButton("Accept", self)
         self.accept_btn.clicked.connect(self._handle_accept)
         btn_layout.addWidget(self.accept_btn)
+
+        self.add_to_dict_btn = QPushButton("Add to dictionary", self)
+        self.add_to_dict_btn.clicked.connect(self._handle_add_to_dict)
+        self.add_to_dict_btn.setVisible(False)
+        btn_layout.addWidget(self.add_to_dict_btn)
 
         self.ignore_btn = QPushButton("Ignore", self)
         self.ignore_btn.setObjectName("ignoreBtn")
@@ -395,12 +403,28 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         if f:
             original = f.original
             replacement = f.replacement
-            action_text = f"Change \"{original}\" to \"{replacement}\"" if original else f"Insert \"{replacement}\""
+            if replacement and replacement.strip():
+                action_text = f"Change \"{original}\" to \"{replacement}\"" if original else f"Insert \"{replacement}\""
+            else:
+                action_text = f"Unknown word: \"{original}\"" if original else "Unknown word"
+            
             self.title_label.setText(action_text)
-            self.accept_btn.setEnabled(True)
-            self.ignore_btn.setEnabled(True)
+            
+            is_cand = is_dictionary_candidate(f)
+            if is_cand:
+                self.add_to_dict_btn.setVisible(True)
+                self.accept_btn.setVisible(False)
+                self.add_to_dict_btn.setEnabled(True)
+                self.ignore_btn.setEnabled(True)
+            else:
+                self.add_to_dict_btn.setVisible(False)
+                self.accept_btn.setVisible(True)
+                self.accept_btn.setEnabled(True)
+                self.ignore_btn.setEnabled(True)
         else:
             self.title_label.setText("No suggestions")
+            self.add_to_dict_btn.setVisible(False)
+            self.accept_btn.setVisible(True)
             self.accept_btn.setEnabled(False)
             self.ignore_btn.setEnabled(False)
 
@@ -540,4 +564,14 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
             logger.error(f"Error handling floating popup ignore: {e}", exc_info=True)
             print(f"[Phase8E Click Diagnostic] Error in _handle_ignore: {e}")
         print("[Phase8E Click Diagnostic] calling self.close()")
+        self.close()
+
+    def _handle_add_to_dict(self):
+        """点击 Add to dictionary：触发回调并关闭弹窗"""
+        print("[Phase8F.1 Click Diagnostic] FloatingCorrectionPopup._handle_add_to_dict() entered")
+        try:
+            if self.on_add_to_dict:
+                self.on_add_to_dict(self.finding)
+        except Exception as e:
+            logger.error(f"Error handling floating popup add to dict: {e}", exc_info=True)
         self.close()
