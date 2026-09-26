@@ -370,5 +370,38 @@ class TestLiveTextMonitor(unittest.TestCase):
             monitor.stop()
 
 
+
+    def test_metadata_survival_in_monitor_state(self):
+        """测试 TextSnapshot 的 metadata（如 element_ref）能够完整传递到 MonitorState 中"""
+        class CustomMockSource(MockTextSource):
+            def get_current_text(self):
+                from core.monitoring import TextSnapshot
+                return TextSnapshot(
+                    text="hello metadata",
+                    control_id="ctrl-meta-1",
+                    status="ready",
+                    is_editable=True,
+                    metadata={"element_ref": "dummy_element_reference_obj", "hwnd": 9999}
+                )
+
+        source = CustomMockSource()
+        monitor = LiveTextMonitor(
+            text_source=source,
+            pipeline=self.pipeline,
+            resolver=self.resolver,
+        )
+        state = monitor.trigger_check()
+        self.assertEqual(state.text, "hello metadata")
+        self.assertIn("element_ref", state.metadata)
+        self.assertEqual(state.metadata["element_ref"], "dummy_element_reference_obj")
+        self.assertEqual(state.metadata["hwnd"], 9999)
+
+        # 验证 CorrectionTarget 能够从带有 metadata 的 MonitorState 成功恢复 element_ref
+        from core.correction.target import CorrectionTarget
+        target = CorrectionTarget.from_snapshot(state)
+        self.assertEqual(target.element_ref, "dummy_element_reference_obj")
+        self.assertEqual(target.hwnd, 9999)
+
+
 if __name__ == "__main__":
     unittest.main()

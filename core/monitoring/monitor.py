@@ -30,6 +30,7 @@ class MonitorState:
     control_id: str = ""
     control_type: str = ""
     error_message: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class LiveTextMonitor:
@@ -104,6 +105,7 @@ class LiveTextMonitor:
                 control_id=self._state.control_id,
                 control_type=self._state.control_type,
                 error_message=self._state.error_message,
+                metadata=dict(self._state.metadata),
             )
 
     def trigger_check(self) -> Optional[MonitorState]:
@@ -151,6 +153,7 @@ class LiveTextMonitor:
                 self._state.control_type = snapshot.control_type
                 self._state.error_message = snapshot.error_message or "Control is unsupported or not editable."
                 self._state.findings = []
+                self._state.metadata = dict(snapshot.metadata)
             return self.get_state()
 
         current_control_id = snapshot.control_id
@@ -175,6 +178,7 @@ class LiveTextMonitor:
                 self._state.control_type = snapshot.control_type
                 self._state.findings = []  # 隔离：切换控件时清空旧 findings
                 self._state.timestamp = now
+                self._state.metadata = dict(snapshot.metadata)
                 if not current_text.strip():
                     self._state.status = "ready"
                 else:
@@ -193,6 +197,7 @@ class LiveTextMonitor:
                 self._state.control_id = current_control_id
                 self._state.control_type = snapshot.control_type
                 self._state.timestamp = now
+                self._state.metadata = dict(snapshot.metadata)
                 if not current_text.strip():
                     self._state.status = "ready"
                     self._state.findings = []  # 空文本立即清空 findings
