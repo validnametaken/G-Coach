@@ -252,13 +252,21 @@ class TestPersonalDictionary(unittest.TestCase):
         state_before = monitor.force_recheck()
         self.assertEqual(state_before.status, "analyzing")
 
-        # D. Normal grammar findings are NOT classified as Add-to-Dictionary candidates merely because of source==harper.
-        f_harper_grammar = Finding(source="harper", category="grammar", message="grammar", original="was", replacement="were", start=0, end=3)
-        self.assertFalse(is_dictionary_candidate(f_harper_grammar))
+        # 1-10. Specific checks for Aichi (spelling w/ replacement), teh (typo), whatare (typo), was (agreement), go (agreement)
+        f_aichi = Finding(source="harper", category="spelling", message="Spelling", original="Aichi", replacement="Arch", start=0, end=5)
+        self.assertTrue(is_dictionary_candidate(f_aichi))
 
-        # E & F. Genuine spelling/unknown/proper-name finding remains an Add-to-Dictionary candidate and supports Ichinomiya.
-        f_spelling = Finding(source="harper", category="spelling", message="unknown", original="Ichinomiya", replacement="", start=0, end=10)
-        self.assertTrue(is_dictionary_candidate(f_spelling))
+        f_teh = Finding(source="harper", category="typo", message="Typo", original="teh", replacement="the", start=0, end=3)
+        self.assertFalse(is_dictionary_candidate(f_teh))
+
+        f_whatare = Finding(source="harper", category="typo", message="Typo", original="whatare", replacement="what are", start=0, end=7)
+        self.assertFalse(is_dictionary_candidate(f_whatare))
+
+        f_was = Finding(source="harper", category="agreement", message="Agreement", original="was", replacement="were", start=0, end=3)
+        self.assertFalse(is_dictionary_candidate(f_was))
+
+        f_go = Finding(source="harper", category="agreement", message="Agreement", original="go", replacement="goes", start=0, end=2)
+        self.assertFalse(is_dictionary_candidate(f_go))
 
         # G. Existing popup behavior: normal correction -> Accept + Ignore; candidate -> Add to dictionary + Ignore
         # H. Existing popup navigation works with multiple findings.

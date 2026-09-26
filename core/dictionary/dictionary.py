@@ -109,18 +109,14 @@ def is_dictionary_candidate(finding: Any) -> bool:
     """判断一个 Finding 是否适合提供 'Add to dictionary' 操作（保守策略）。
 
     规则：
-    - 有有效替换文本的普通纠错（如 was->were, go->goes, whatare->what are, a->an）不是词典候选。
-    - 标点符号不是词典候选。
-    - 仅当 Finding 的类别明确指示为拼写错误、未知词、词汇或专有名词（如 category 包含 spelling, unknown, vocabulary, name, spell）且无有效替换时，才是词典候选。
-    - 不再将 source == 'harper' 作为独立候选原因。
+    - category == "spelling"（如 Aichi -> Arch）即使有替换文本，也允许作为词典候选。
+    - 保留其他已知类别（unknown, vocabulary, name, spell）。
+    - 排除 typo（如 teh -> the, whatare -> what are）、agreement（如 was -> were, go -> goes）、punctuation、morphology、normal grammar.
+    - 排除标点符号与空原词。
     """
     if not finding or not getattr(finding, "original", None):
         return False
     
-    replacement = getattr(finding, "replacement", "")
-    if replacement and replacement.strip():
-        return False
-
     category = str(getattr(finding, "category", "")).lower()
     original = str(getattr(finding, "original", ""))
 
