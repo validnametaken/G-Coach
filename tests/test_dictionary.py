@@ -172,3 +172,59 @@ class TestPersonalDictionary(unittest.TestCase):
         resolved = resolver.resolve(raw)
         curated = policy.apply(resolved)
         self.assertEqual(len(curated), 0)
+
+    def test_phase8f1_dictionary_candidate_detection(self):
+        """Phase 8F.1: Test is_dictionary_candidate correctly identifies spelling/vocabulary findings and rejects grammar/morphology/word-boundary/punctuation."""
+        from core.dictionary import is_dictionary_candidate
+        
+        # 1. Spelling finding with no replacement -> True
+        f_spelling = Finding(source="harper", category="spelling", message="Unknown word", original="Ichinomiya", replacement="", start=0, end=10)
+        self.assertTrue(is_dictionary_candidate(f_spelling))
+
+        # 2. Normal grammar correction -> False
+        f_grammar = Finding(source="harper", category="grammar", message="Subject-verb agreement", original="was", replacement="were", start=0, end=3)
+        self.assertFalse(is_dictionary_candidate(f_grammar))
+
+        # 3. Morphology correction -> False
+        f_morph = Finding(source="harper", category="grammar", message="Verb form", original="go", replacement="goes", start=0, end=2)
+        self.assertFalse(is_dictionary_candidate(f_morph))
+
+        # 4. Word-boundary correction -> False
+        f_wb = Finding(source="symspell", category="word_boundary", message="Compound split", original="whatare", replacement="what are", start=0, end=7)
+        self.assertFalse(is_dictionary_candidate(f_wb))
+
+        # 5. Punctuation correction -> False
+        f_punct = Finding(source="harper", category="punctuation", message="Punctuation", original=".", replacement="", start=5, end=6)
+        self.assertFalse(is_dictionary_candidate(f_punct))
+
+    def test_phase8f1_add_to_dictionary_flow(self):
+        """Phase 8F.1: Test clicking Add to dictionary stores word, keeps source text unchanged, and removes finding on re-analysis."""
+        from core.dictionary import is_dictionary_candidate
+        
+        text = "Ichinomiya are beautiful."
+        f_name = Finding(source="harper", category="spelling", message="Unknown word", original="Ichinomiya", replacement="", start=0, end=10)
+        f_grammar = Finding(source="harper", category="grammar", message="Subject-verb agreement", original="are", replacement="is", start=11, end=14)
+        
+        self.assertTrue(is_dictionary_candidate(f_name))
+        self.assertFalse(is_dictionary_candidate(f_grammar))
+
+        # Simulate adding to dictionary
+        self.dictionary.add_word(f_name.original)
+        self.assertTrue(self.dictionary.contains("Ichinomiya"))
+
+        # Duplicate addition is harmless
+        added_again = self.dictionary.add_word("Ichinomiya")
+        self.assertFalse(added_again)
+        self.assertEqual(len(self.dictionary.words()), 1)
+
+        # Pipeline analyze with dictionary suppresses Ichinomiya finding but preserves grammar finding ('are' -> 'is' or subject-verb)
+        pipeline = AnalysisPipeline(dictionary=self.dictionary)
+        from core.analysis import HarperAnalysisEngine
+        pipeline.register_engine(HarperAnalysisEngine())
+        
+        findings = pipeline.analyze(text)
+        origs = [f.original for f in findings]
+        self.assertNotIn("Ichinomiya", origs)
+        # Source text is unchanged
+        self.assertEqual(text, "Ichinomiya are beautiful.")
+
