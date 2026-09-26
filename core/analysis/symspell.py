@@ -135,6 +135,30 @@ class SymSpellAnalysisEngine(BaseAnalysisEngine):
                 if segmented and " " in segmented and result.distance_sum >= 1:
                     # 确保切分出来的词不仅仅是把整个词原封不动返回
                     if segmented.replace(" ", "") == token_lower:
+                        parts = segmented.split(" ")
+
+                        # 保守候选过滤规则 (Conservative candidate filtering):
+                        # 1. 限制切分出的组件数量最多为 2（防止长单词如 finished -> f in i she d 被过度拆解为多个碎片）
+                        if len(parts) != 2:
+                            continue
+
+                        # 2. 检查单字碎片：只允许 "a" 或 "i" 作为单字符组件（如 "a lot" 中的 "a"），其余碎片长度必须 >= 2
+                        valid_parts = True
+                        for part in parts:
+                            if len(part) < 2 and part not in {"a", "i"}:
+                                valid_parts = False
+                                break
+                        if not valid_parts:
+                            continue
+
+                        # 3. 如果原 token 本身是词典中的合法单词（且不在已知的高频粘连词白名单中），则不予拆分
+                        KNOWN_JOINED_WORDS = {
+                            "whatare", "howare", "didyou", "inthe", "onthe",
+                            "thankyou", "goodmorning", "alot", "youare", "whatdo"
+                        }
+                        if token_lower in self._sym_spell.words and token_lower not in KNOWN_JOINED_WORDS:
+                            continue
+
                         # 保持原始大小写（例如 Thankyou -> Thank you, WHATARE -> What are）
                         replacement = self._preserve_capitalization(token, segmented)
 

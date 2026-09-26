@@ -75,3 +75,8 @@ didnt 1000000
 couldnt 1000000
 wouldnt 1000000
 shouldnt 1000000
+waiting 1000000
+outside 1000000
+finished 1000000
+about 1000000
+your 1000000

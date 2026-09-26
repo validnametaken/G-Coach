@@ -61,7 +61,8 @@ class TestSymSpellAnalysisEngine(unittest.TestCase):
             "dont", "cant", "wont", "isnt", "doesnt", "didnt",
             "couldnt", "wouldnt", "shouldnt", "cannot", "another",
             "something", "whatever", "however", "therefore", "already",
-            "without", "today", "inside", "someone", "everyone"
+            "without", "today", "inside", "someone", "everyone",
+            "waiting", "outside", "finished", "about", "your"
         ]
 
         for word in protected_words:
@@ -69,7 +70,7 @@ class TestSymSpellAnalysisEngine(unittest.TestCase):
                 findings = self.engine.analyze(word)
                 self.assertEqual(
                     len(findings), 0,
-                    f"Protected word/contraction '{word}' should not generate any SymSpell finding, but got: {findings}"
+                    f"Protected/legitimate word '{word}' should not generate any SymSpell finding, but got: {findings}"
                 )
 
     def test_sentence_and_span_alignment(self):
