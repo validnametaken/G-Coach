@@ -575,3 +575,39 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         except Exception as e:
             logger.error(f"Error handling floating popup add to dict: {e}", exc_info=True)
         self.close()
+
+
+def calculate_popup_position(
+    main_x: int,
+    main_y: int,
+    main_width: int,
+    main_height: int,
+    popup_width: int,
+    popup_height: int,
+    screen_left: int,
+    screen_top: int,
+    screen_width: int,
+    screen_height: int,
+    gap: int = 20,
+) -> Tuple[int, int]:
+    """计算悬浮弹窗的屏幕安全坐标（优先右侧，其次左侧，支持双向水平及垂直防溢出裁剪）。"""
+    screen_right = screen_left + screen_width
+    screen_bottom = screen_top + screen_height
+
+    # 1. 优先尝试右侧
+    popup_x = main_x + main_width + gap
+    
+    # 2. 如果右侧空间不足，尝试左侧
+    if popup_x + popup_width > screen_right:
+        left_candidate = main_x - popup_width - gap
+        if left_candidate >= screen_left:
+            popup_x = left_candidate
+        else:
+            # 两侧都不足：在屏幕内夹紧
+            popup_x = max(screen_left, min(popup_x, screen_right - popup_width))
+
+    # 3. 垂直位置（默认主窗口 y + 150）
+    popup_y = main_y + 150
+    popup_y = max(screen_top, min(popup_y, screen_bottom - popup_height))
+
+    return (popup_x, popup_y)

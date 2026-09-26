@@ -41,7 +41,7 @@ from core.correction import CorrectionController
 from core.correction.target import CorrectionTarget
 from core.correction.engine import BackgroundCorrectionEngine
 from core.dictionary import is_dictionary_candidate, PersonalDictionary
-from .floating_correction import FloatingCorrectionPopup
+from .floating_correction import FloatingCorrectionPopup, calculate_popup_position
 from .presenter import UIPresenter
 
 
@@ -429,9 +429,28 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
             self.last_popup_index = active_index
 
             main_pos = self.pos()
-            popup_x = main_pos.x() + self.width() + 20
-            popup_y = main_pos.y() + 150
-            print(f"[Phase8E diagnostic] Popup showing at ({popup_x}, {popup_y}) [Main pos: {main_pos}, width: {self.width()}]")
+            screen = self.screen() if hasattr(self, "screen") else None
+            if not screen:
+                screen = QApplication.screenAt(main_pos) or QApplication.primaryScreen()
+            screen_geom = screen.availableGeometry() if screen else type("Rect", (), {"x": lambda: 0, "y": lambda: 0, "width": lambda: 1920, "height": lambda: 1080})()
+            
+            popup_size = self.active_popup.sizeHint()
+            p_w = max(popup_size.width(), 260)
+            p_h = max(popup_size.height(), 120)
+
+            popup_x, popup_y = calculate_popup_position(
+                main_pos.x(),
+                main_pos.y(),
+                self.width(),
+                self.height(),
+                p_w,
+                p_h,
+                screen_geom.x(),
+                screen_geom.y(),
+                screen_geom.width(),
+                screen_geom.height(),
+            )
+            print(f"[Phase8E diagnostic] Popup showing at ({popup_x}, {popup_y}) [Main pos: {main_pos}, width: {self.width()}, screen: {screen_geom}]")
             self.active_popup.show_at(popup_x, popup_y)
             print(f"[Phase8E diagnostic] Popup shown")
         else:
