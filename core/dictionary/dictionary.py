@@ -106,12 +106,13 @@ class PersonalDictionary:
 
 
 def is_dictionary_candidate(finding: Any) -> bool:
-    """判断一个 Finding 是否适合提供 'Add to dictionary' 操作。
+    """判断一个 Finding 是否适合提供 'Add to dictionary' 操作（保守策略）。
 
     规则：
     - 有有效替换文本的普通纠错（如 was->were, go->goes, whatare->what are, a->an）不是词典候选。
     - 标点符号不是词典候选。
-    - 无替换文本（如 Harper 的 spelling/unknown 发现）或专为拼写/未知词/词汇设置的发现是词典候选。
+    - 仅当 Finding 的类别明确指示为拼写错误、未知词、词汇或专有名词（如 category 包含 spelling, unknown, vocabulary, name, spell）且无有效替换时，才是词典候选。
+    - 不再将 source == 'harper' 作为独立候选原因。
     """
     if not finding or not getattr(finding, "original", None):
         return False
@@ -121,16 +122,12 @@ def is_dictionary_candidate(finding: Any) -> bool:
         return False
 
     category = str(getattr(finding, "category", "")).lower()
-    source = str(getattr(finding, "source", "")).lower()
     original = str(getattr(finding, "original", ""))
 
     if "punct" in category or original in [".", ",", "!", "?", ";", ":"]:
         return False
 
-    if source == "harper" or category in ["spelling", "unknown", "style", "vocabulary"]:
-        return True
-
-    if not replacement or not replacement.strip():
+    if category in ["spelling", "unknown", "vocabulary", "name", "spell"]:
         return True
 
     return False
