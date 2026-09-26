@@ -90,11 +90,15 @@ class BackgroundCorrectionEngine:
         else:
             new_text = current_text[:start] + finding.replacement + current_text[end:]
 
-        # 5. 应用写入 (ValuePattern.SetValue / TextPattern)
+        # 5. 应用写入：若为 Notepad++ Scintilla 目标，严禁使用 UIA 写入 Wrapper，必须直接执行 Scintilla 降级写入
         success = False
         try:
             if element:
                 import uiautomation as auto
+                if BackgroundCorrectionEngine._is_scintilla_target(target, element):
+                    logger.info("Diagnostic: Notepad++ Scintilla-backed target detected; routing directly to Scintilla Win32 fallback (bypassing generic UIA write wrappers).")
+                    return BackgroundCorrectionEngine._apply_scintilla_fallback(target, finding, current_text)
+
                 applied = False
                 
                 # 尝试 1: ValuePattern
@@ -213,9 +217,9 @@ class BackgroundCorrectionEngine:
 
     @staticmethod
     def _resolve_scintilla_hwnd(hwnd: int) -> Optional[int]:
-        """解析实际的 Scintilla 编辑器 HWND。
+        """递归解析实际的 Scintilla 编辑器 HWND（支持任意深度子孙窗口遍历）。
         - 如果 hwnd 本身为 Scintilla，返回 hwnd。
-        - 否则优先通过 FindWindowExW 或枚举子窗口查找类名严格为 "Scintilla" 的窗口。
+        - 否则优先通过 FindWindowExW 查找，或深度递归遍历所有后代窗口查找类名严格为 "Scintilla" 的窗口。
         - 找不到返回 None。
         """
         if not hwnd or platform.system() != "Windows":
@@ -226,44 +230,76 @@ class BackgroundCorrectionEngine:
                 return None
             user32 = ctypes.windll.user32
             
+            logger.info(f"[Phase8G diagnostic] Resolving Scintilla from HWND {hwnd}...")
+            
             buf = ctypes.create_unicode_buffer(256)
             user32.GetClassNameW(hwnd, buf, 256)
             if "scintilla" in buf.value.lower():
                 return int(hwnd)
                 
-            # 1. 优先尝试 FindWindowExW 直接查找子窗口
-            child = user32.FindWindowExW(hwnd, 0, "Scintilla", None)
-            if child:
-                return int(child)
+            # 1. 尝试直接/递归使用 FindWindowExW (兼容单层测试)
+            try:
+                child = user32.FindWindowExW(hwnd, 0, "Scintilla", None)
+                if child and isinstance(child, int) and child != 0:
+                    return int(child)
+            except Exception:
+                pass
                 
-            # 2. 否则枚举后代窗口
-            found_hwnd = None
+            # 2. 深度/广度递归遍历所有后代窗口
+            seen = set()
+            stack = [int(hwnd)]
             
-            @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-            def enum_child_proc(child_hwnd, lparam):
-                nonlocal found_hwnd
-                cbuf = ctypes.create_unicode_buffer(256)
-                user32.GetClassNameW(child_hwnd, cbuf, 256)
-                if "scintilla" in cbuf.value.lower():
-                    found_hwnd = int(child_hwnd)
-                    return False
-                return True
+            while stack:
+                curr = stack.pop()
+                if curr in seen:
+                    continue
+                seen.add(curr)
                 
-            user32.EnumChildWindows(hwnd, enum_child_proc, 0)
-            if found_hwnd:
-                return found_hwnd
+                buf = ctypes.create_unicode_buffer(256)
+                user32.GetClassNameW(curr, buf, 256)
+                cls_name = buf.value
                 
+                if "scintilla" in cls_name.lower():
+                    logger.info(f"[Phase8G diagnostic] Resolved Scintilla HWND {curr} with class {cls_name}")
+                    return curr
+                    
+                children = []
+                def enum_child_proc(child_hwnd, lparam):
+                    children.append(int(child_hwnd))
+                    return True
+                    
+                try:
+                    proc_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+                    user32.EnumChildWindows(curr, proc_type(enum_child_proc), 0)
+                except Exception:
+                    try:
+                        user32.EnumChildWindows(curr, enum_child_proc, 0)
+                    except Exception:
+                        pass
+                for child in reversed(children):
+                    if child not in seen:
+                        stack.append(child)
+                        
+            logger.info(f"[Phase8G diagnostic] Failed to resolve Scintilla HWND from initial HWND {hwnd}")
             return None
         except Exception as e:
-            logger.debug(f"Error resolving Scintilla HWND from {hwnd}: {e}")
+            logger.debug(f"Error recursively resolving Scintilla HWND from {hwnd}: {e}")
             return None
 
     @staticmethod
     def _is_scintilla_target(target: CorrectionTarget, element: Any) -> bool:
-        """判断目标是否为 Notepad++ / Scintilla 控件（严禁仅凭 app_name='notepad++.exe' 判定，必须能成功解析出 Scintilla HWND 或类名）"""
+        """判断目标是否为 Notepad++ / Scintilla 控件。
+        严格要求：
+        - 必须是 Notepad++ 目标 (app_name 包含 notepad++)
+        - 且能成功递归解析出实际的 Scintilla HWND。
+        """
         if not target:
             return False
-        
+            
+        app_name = (target.app_name or "").lower()
+        if not ("notepad++" in app_name or "notepad++.exe" in app_name):
+            return False
+            
         hwnd = target.hwnd
         if not hwnd and element:
             try:
@@ -273,15 +309,15 @@ class BackgroundCorrectionEngine:
                 
         scintilla_hwnd = BackgroundCorrectionEngine._resolve_scintilla_hwnd(hwnd)
         if scintilla_hwnd:
-            return True
-            
-        if element:
             try:
-                cls_name = str(getattr(element, "ClassName", ""))
-                if "scintilla" in cls_name.lower():
+                import ctypes
+                buf = ctypes.create_unicode_buffer(256)
+                ctypes.windll.user32.GetClassNameW(scintilla_hwnd, buf, 256)
+                if "scintilla" in buf.value.lower():
+                    logger.info(f"[Phase8G diagnostic] Notepad++ Scintilla target verified: HWND {scintilla_hwnd}, class {buf.value}")
                     return True
             except Exception:
-                pass
+                return True
                 
         return False
 
