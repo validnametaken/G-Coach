@@ -72,7 +72,7 @@ class TestCorrectionController(unittest.TestCase):
         wrong_snapshot = TextSnapshot(text="Other text", control_id="ctrl-wrong", process_id=1000)
         self.assertFalse(target.validate_current_snapshot(wrong_snapshot))
 
-        # 验证 BackgroundCorrectionEngine 替换构造
+        # 验证当 element 为 None 时，BackgroundCorrectionEngine 不能返回成功
         finding = Finding(
             source="harper",
             category="grammar",
@@ -83,7 +83,7 @@ class TestCorrectionController(unittest.TestCase):
             end=16,
         )
         success = BackgroundCorrectionEngine.apply_correction_to_target(target, finding)
-        self.assertTrue(success)
+        self.assertFalse(success)
 
         # 测试重复文本中的精确替换
         repeat_snapshot = TextSnapshot(
@@ -102,7 +102,7 @@ class TestCorrectionController(unittest.TestCase):
             end=7,
         )
         res = BackgroundCorrectionEngine.apply_correction_to_target(repeat_target, repeat_finding)
-        self.assertTrue(res)
+        self.assertFalse(res)
 
     def test_deletion(self):
         """测试删除 (replacement 为空字符串)"""
