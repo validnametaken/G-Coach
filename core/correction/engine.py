@@ -98,46 +98,91 @@ class BackgroundCorrectionEngine:
                 applied = False
                 
                 # 尝试 1: ValuePattern
+                logger.info("Diagnostic: Attempting UIA write pattern: ValuePattern")
                 try:
                     val_pattern = element.GetPattern(auto.PatternId.ValuePattern)
-                    if val_pattern and not getattr(val_pattern, "IsReadOnly", False):
-                        val_pattern.SetValue(new_text)
-                        applied = True
-                        logger.info(f"Successfully applied background correction via ValuePattern to control {target.control_id}")
+                    pattern_exists = (val_pattern is not None)
+                    logger.info(f"Diagnostic: ValuePattern exists: {pattern_exists} (ReadOnly: {getattr(val_pattern, 'IsReadOnly', 'N/A') if pattern_exists else 'N/A'})")
+                    if pattern_exists and not getattr(val_pattern, "IsReadOnly", False):
+                        logger.info("Diagnostic: Calling ValuePattern.SetValue()")
+                        try:
+                            val_pattern.SetValue(new_text)
+                            applied = True
+                            logger.info(f"Successfully applied background correction via ValuePattern to control {target.control_id}")
+                        except Exception as e:
+                            logger.info(f"Diagnostic: ValuePattern.SetValue raised exception: {e}")
+                            raise
                 except Exception as e:
                     logger.debug(f"ValuePattern.SetValue failed: {e}")
 
                 # 尝试 2: TextPattern range replacement
                 if not applied:
                     for pid in (auto.PatternId.TextPattern, auto.PatternId.TextPattern2):
+                        pattern_name = "TextPattern" if pid == auto.PatternId.TextPattern else "TextPattern2"
+                        logger.info(f"Diagnostic: Attempting UIA write pattern: {pattern_name}")
                         try:
                             tp = element.GetPattern(pid)
-                            if tp and tp.DocumentRange:
-                                rng = tp.DocumentRange
-                                # 尝试定位到 [start:end] 范围并替换
-                                # 若直接操作整篇文档，可使用 Selection 或直接构造 range
-                                rng.Select()
-                                active_selection = tp.GetSelection()
-                                if active_selection and len(active_selection) > 0:
-                                    active_selection[0].ReplaceText(finding.replacement)
-                                    applied = True
-                                    logger.info(f"Successfully applied correction via TextPattern ReplaceText.")
-                                    break
+                            pattern_exists = (tp is not None and getattr(tp, "DocumentRange", None) is not None)
+                            logger.info(f"Diagnostic: {pattern_name} exists: {pattern_exists}")
+                            if pattern_exists:
+                                logger.info(f"Diagnostic: Calling {pattern_name} range select/replace")
+                                try:
+                                    rng = tp.DocumentRange
+                                    rng.Select()
+                                    active_selection = tp.GetSelection()
+                                    if active_selection and len(active_selection) > 0:
+                                        active_selection[0].ReplaceText(finding.replacement)
+                                        applied = True
+                                        logger.info(f"Successfully applied correction via {pattern_name} ReplaceText.")
+                                        break
+                                except Exception as e:
+                                    logger.info(f"Diagnostic: {pattern_name} replacement raised exception: {e}")
+                                    raise
                         except Exception as e:
                             logger.debug(f"TextPattern replacement failed: {e}")
 
                 # 尝试 3: 若 ValuePattern 和 TextPattern 均不可用但控件有焦点或支持 LegacyIAccessiblePattern
                 if not applied:
+                    logger.info("Diagnostic: Attempting UIA write pattern: LegacyIAccessiblePattern")
                     try:
                         acc = element.GetPattern(auto.PatternId.LegacyIAccessiblePattern)
-                        if acc and hasattr(acc, "SetValue"):
-                            acc.SetValue(new_text)
-                            applied = True
-                            logger.info("Successfully applied correction via LegacyIAccessiblePattern.")
+                        pattern_exists = (acc is not None and hasattr(acc, "SetValue"))
+                        logger.info(f"Diagnostic: LegacyIAccessiblePattern exists and has SetValue: {pattern_exists}")
+                        if pattern_exists:
+                            logger.info("Diagnostic: Calling LegacyIAccessiblePattern.SetValue()")
+                            try:
+                                acc.SetValue(new_text)
+                                applied = True
+                                logger.info("Successfully applied correction via LegacyIAccessiblePattern.")
+                            except Exception as e:
+                                logger.info(f"Diagnostic: LegacyIAccessiblePattern.SetValue raised exception: {e}")
+                                raise
                     except Exception as e:
                         logger.debug(f"LegacyIAccessiblePattern SetValue failed: {e}")
 
                 success = applied
+                
+                # 5. Read target text immediately after the call if possible
+                try:
+                    post_text = ""
+                    val_p = element.GetPattern(auto.PatternId.ValuePattern)
+                    if val_p:
+                        post_text = val_p.Value or ""
+                    if not post_text:
+                        for pid in (auto.PatternId.TextPattern, auto.PatternId.TextPattern2):
+                            p = element.GetPattern(pid)
+                            if p and p.DocumentRange:
+                                post_text = p.DocumentRange.GetText(65535) or ""
+                                if post_text:
+                                    break
+                    if not post_text:
+                        acc = element.GetPattern(auto.PatternId.LegacyIAccessiblePattern)
+                        if acc:
+                            post_text = acc.Value or acc.Name or ""
+                    logger.info(f"Diagnostic: Target text immediately after write call: {repr(post_text)}")
+                except Exception as ex:
+                    logger.info(f"Diagnostic: Failed to read target text immediately after call: {ex}")
+
                 if not success:
                     logger.warning(f"No suitable writable pattern (ValuePattern/TextPattern/LegacyIAccessible) found for target control {target.control_id}.")
             else:
