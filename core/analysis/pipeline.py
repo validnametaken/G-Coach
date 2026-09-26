@@ -1,11 +1,12 @@
 """
-分析协调器/管道 (Pipeline) - Phase 1 Unified Analysis Foundation
+分析协调器/管道 (Pipeline) - Phase 1 Unified Analysis Foundation & Phase 8F Personal Dictionary
 """
 
 import logging
 from typing import List, Dict, Any, Optional
 from .finding import Finding
 from .engine import BaseAnalysisEngine
+from core.dictionary import PersonalDictionary
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +18,9 @@ class AnalysisPipeline:
     汇总并返回统一的标准 Findings 列表。
     """
 
-    def __init__(self):
+    def __init__(self, dictionary: Optional[PersonalDictionary] = None):
         self._engines: Dict[str, BaseAnalysisEngine] = {}
+        self.dictionary = dictionary or PersonalDictionary()
 
     def register_engine(self, engine: BaseAnalysisEngine) -> None:
         """注册一个分析引擎"""
@@ -64,4 +66,21 @@ class AnalysisPipeline:
             except Exception as e:
                 logger.error(f"Error running analysis engine '{name}': {e}", exc_info=True)
 
-        return all_findings
+        # 过滤掉落在个人词典中的词汇产生的 findings
+        filtered_findings = []
+        for f in all_findings:
+            orig = f.original
+            span_text = text[f.start:f.end] if 0 <= f.start <= f.end <= len(text) else orig
+            
+            is_in_dict = (
+                self.dictionary.contains(orig) or 
+                (span_text and self.dictionary.contains(span_text))
+            )
+            
+            if is_in_dict:
+                logger.debug(f"Suppressing finding for dictionary word: '{orig}' (source: {f.source})")
+                continue
+            
+            filtered_findings.append(f)
+
+        return filtered_findings
