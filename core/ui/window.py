@@ -338,55 +338,82 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
         self._handle_popup_ignore(finding)
 
     def _sync_floating_popup(self, findings: List[Finding], state: MonitorState):
-        """根据当前 findings 和 monitor state 同步浮动纠正弹窗的显示与隐藏"""
+        """根据当前 findings 和 monitor state 同步浮动纠正弹窗的显示与隐藏（支持多发现导航）"""
         if not findings:
             if self.active_popup:
                 self.active_popup.close()
                 self.active_popup = None
                 self.last_popup_finding_id = None
                 self.last_popup_finding_signature = None
+                self.last_popup_findings_count = 0
             return
 
-        # 选择第一个高优 finding 进行悬浮展示
-        active_finding = findings[0]
+        current_findings_count = len(findings)
+        active_index = getattr(self, "last_popup_index", 0)
+        if active_index >= current_findings_count:
+            active_index = current_findings_count - 1
+
+        active_finding = findings[active_index] if findings else findings[0]
         active_signature = (
             active_finding.source,
             active_finding.original,
             active_finding.replacement,
             active_finding.start,
-            active_finding.end
+            active_finding.end,
+            current_findings_count,
+            active_index
         )
 
-        # 如果当前没有弹出窗口，或者 finding 发生语义变化，则创建/重建弹窗
         if self.active_popup is None or getattr(self, "last_popup_finding_signature", None) != active_signature:
             if self.active_popup:
+                if getattr(self, "last_popup_findings_count", 0) == current_findings_count and self.active_popup.findings == findings:
+                    self.active_popup.set_findings(findings, active_index)
+                    self.last_popup_finding_signature = active_signature
+                    return
+
                 print(f"[Phase8E diagnostic] Finding changed or popup recreation requested. Closing old popup.")
                 self.active_popup.close()
                 self.active_popup = None
 
-            # 记录屏幕与窗口几何信息用于诊断坐标
             primary_screen = QApplication.primaryScreen()
             primary_geom = primary_screen.geometry() if primary_screen else "None"
             all_screens_geom = [s.geometry() for s in QApplication.screens()]
             print(f"[Phase8E Screen Diagnostic] Primary screen: {primary_geom}, All screens: {all_screens_geom}")
 
-            # 根据环境变量 GCOACH_POPUP_TEST 动态决定是否传入 parent
             import os
             test_mode = os.environ.get("GCOACH_POPUP_TEST", "").strip().upper()
             popup_parent = self if test_mode == "Q-PARENT" else None
             target = CorrectionTarget.from_snapshot(state)
+            
+            def handle_navigate(new_idx: int):
+                self.last_popup_index = new_idx
+                nav_finding = findings[new_idx] if 0 <= new_idx < len(findings) else findings[0]
+                self.last_popup_finding_signature = (
+                    nav_finding.source,
+                    nav_finding.original,
+                    nav_finding.replacement,
+                    nav_finding.start,
+                    nav_finding.end,
+                    len(findings),
+                    new_idx
+                )
+                print(f"[Phase8E Navigation] Navigated to index {new_idx}: {nav_finding.original} -> {nav_finding.replacement}")
+
             self.active_popup = FloatingCorrectionPopup(
-                finding=active_finding,
+                findings=findings,
+                current_index=active_index,
                 target=target,
                 on_accept=self._handle_popup_accept,
                 on_ignore=self._handle_popup_ignore,
+                on_navigate=handle_navigate,
                 parent=popup_parent,
             )
-            print(f"[Phase8E diagnostic] Popup constructed")
+            print(f"[Phase8E diagnostic] Multi-finding popup constructed (total: {current_findings_count}, index: {active_index})")
             self.last_popup_finding_id = active_finding.id
             self.last_popup_finding_signature = active_signature
+            self.last_popup_findings_count = current_findings_count
+            self.last_popup_index = active_index
 
-            # 计算弹窗显示坐标（定位在主窗口附近或屏幕合适位置）
             main_pos = self.pos()
             popup_x = main_pos.x() + self.width() + 20
             popup_y = main_pos.y() + 150
@@ -394,8 +421,8 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
             self.active_popup.show_at(popup_x, popup_y)
             print(f"[Phase8E diagnostic] Popup shown")
         else:
-            # 弹窗已存在且 signature 相同，复用现有弹窗
-            pass
+            if self.active_popup:
+                self.active_popup.set_findings(findings, active_index)
 
     def _inject_test_popup_isolation(self):
         """隔离测试 1：POPUP-ONLY 确定性注入 Finding 并调用 _sync_floating_popup"""
