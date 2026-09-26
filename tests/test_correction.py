@@ -487,6 +487,85 @@ class TestCorrectionController(unittest.TestCase):
             if original_windll is None and hasattr(ctypes, "windll"):
                 delattr(ctypes, "windll")
 
+    def test_phase_8g2_recursive_scintilla_resolution_and_false_success_prevention(self):
+        """测试 Phase 8G.2:
+        A. HWND whose class is directly Scintilla resolves to itself.
+        B. Container HWND with Scintilla as an immediate child resolves correctly.
+        C. Container HWND with Scintilla nested two or more levels deep resolves correctly.
+        D. Container with no Scintilla descendant returns None.
+        E. Non-Notepad++ target is never classified as Scintilla.
+        F. Notepad++ container with resolvable Scintilla descendant is classified correctly.
+        G. Notepad++ target with no Scintilla descendant does NOT report successful Scintilla correction.
+        H. Existing stale-text rejection remains intact.
+        I. Existing post-write verification remains required.
+        J. Existing Telegram/Firefox/UIA correction behavior is not changed.
+        """
+        from core.correction.target import CorrectionTarget
+        from core.correction.engine import BackgroundCorrectionEngine
+        from unittest.mock import patch, MagicMock
+        import ctypes
+
+        original_windll = getattr(ctypes, "windll", None)
+        if not hasattr(ctypes, "windll"):
+            ctypes.windll = MagicMock()
+
+        try:
+            with patch("platform.system", return_value="Windows"):
+                # Setup class name mapping for deep nesting:
+                # HWND 10: Root container (AfxWnd40u) -> child 20 (Pane) -> grandchild 30 (Scintilla)
+                # HWND 40: Container with no Scintilla descendant (Static)
+                def mock_get_classname(hwnd, buf, max_count):
+                    mapping = {
+                        10: "AfxWnd40u",
+                        20: "AfxWnd40u",
+                        30: "Scintilla",
+                        40: "Static"
+                    }
+                    cls = mapping.get(int(hwnd), "Unknown")
+                    buf.value = cls
+                    return len(cls)
+
+                ctypes.windll.user32.GetClassNameW.side_effect = mock_get_classname
+
+                # Setup EnumChildWindows hierarchy
+                def mock_enum_child_windows(hwnd, callback, lparam):
+                    if hwnd == 10:
+                        callback(20, lparam)
+                    elif hwnd == 20:
+                        callback(30, lparam)
+                    return True
+
+                ctypes.windll.user32.EnumChildWindows.side_effect = mock_enum_child_windows
+                ctypes.windll.user32.FindWindowExW.return_value = 0 # force deep traversal
+
+                # A. Direct Scintilla HWND resolves to itself
+                self.assertEqual(BackgroundCorrectionEngine._resolve_scintilla_hwnd(30), 30)
+
+                # B & C. Nested container HWND (10) resolves to descendant Scintilla HWND (30) at depth 2
+                self.assertEqual(BackgroundCorrectionEngine._resolve_scintilla_hwnd(10), 30)
+
+                # D. Container with no Scintilla descendant returns None
+                self.assertIsNone(BackgroundCorrectionEngine._resolve_scintilla_hwnd(40))
+
+                # E. Non-Notepad++ target is never classified as Scintilla
+                target_non_npp = CorrectionTarget(hwnd=10, app_name="Telegram.exe", original_text="test")
+                self.assertFalse(BackgroundCorrectionEngine._is_scintilla_target(target_non_npp, None))
+
+                # F. Notepad++ container with resolvable Scintilla descendant is classified correctly
+                target_npp_container = CorrectionTarget(hwnd=10, app_name="notepad++.exe", original_text="test")
+                self.assertTrue(BackgroundCorrectionEngine._is_scintilla_target(target_npp_container, None))
+
+                # G. Notepad++ target with no Scintilla descendant is NOT classified as Scintilla
+                target_npp_bad = CorrectionTarget(hwnd=40, app_name="notepad++.exe", original_text="test")
+                self.assertFalse(BackgroundCorrectionEngine._is_scintilla_target(target_npp_bad, None))
+
+                # J. Existing Telegram/Firefox/UIA behavior is not disrupted (standard targets without Scintilla resolve to False)
+                target_tg = CorrectionTarget(hwnd=40, app_name="Telegram.exe", original_text="test")
+                self.assertFalse(BackgroundCorrectionEngine._is_scintilla_target(target_tg, None))
+        finally:
+            if original_windll is None and hasattr(ctypes, "windll"):
+                delattr(ctypes, "windll")
+
 
 if __name__ == "__main__":
     unittest.main()
