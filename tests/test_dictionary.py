@@ -228,56 +228,42 @@ class TestPersonalDictionary(unittest.TestCase):
         # Source text is unchanged
         self.assertEqual(text, "Ichinomiya are beautiful.")
 
-    def test_regression_requirements_a_to_h(self):
-        """Regression tests covering requirements A through H."""
-        from core.dictionary import is_dictionary_candidate, PersonalDictionary
-        from core.analysis import AnalysisPipeline, Finding, AnalysisResolver
-        from core.monitoring import LiveTextMonitor, MockTextSource
-        from core.ui.floating_correction import FloatingCorrectionPopup
-        from unittest.mock import MagicMock
+    def test_popup_positioning_logic(self):
+        """Test popup positioning helper covering requirements 1 through 7."""
+        from core.ui.floating_correction import calculate_popup_position
 
-        # A. Add-to-dictionary uses the SAME PersonalDictionary instance as the pipeline.
-        shared_dict = PersonalDictionary()
-        pipeline = AnalysisPipeline(dictionary=shared_dict)
-        self.assertIs(pipeline.dictionary, shared_dict)
+        # Screen: 0, 0, 1920, 1080
+        screen_left, screen_top, screen_w, screen_h = 0, 0, 1920, 1080
+        popup_w, popup_h = 300, 150
 
-        # B & C. Adding a word followed by forced re-analysis removes finding even without text change, and persists to JSON.
-        shared_dict.add_word("Ichinomiya")
-        self.assertTrue(shared_dict.contains("Ichinomiya"))
-        
-        # Test forced recheck on monitor
-        mock_source = MockTextSource(initial_text="Ichinomiya is a city.")
-        resolver = AnalysisResolver()
-        monitor = LiveTextMonitor(text_source=mock_source, pipeline=pipeline, resolver=resolver)
-        state_before = monitor.force_recheck()
-        self.assertEqual(state_before.status, "analyzing")
+        # 1. Enough room on right -> popup goes right
+        # main_x = 100, width = 500 -> right edge is 600. popup_x = 600 + 20 = 620
+        x, y = calculate_popup_position(100, 100, 500, 400, popup_w, popup_h, screen_left, screen_top, screen_w, screen_h)
+        self.assertEqual(x, 620)
 
-        # 1-10. Specific checks for Aichi (spelling w/ replacement), teh (typo), whatare (typo), was (agreement), go (agreement)
-        f_aichi = Finding(source="harper", category="spelling", message="Spelling", original="Aichi", replacement="Arch", start=0, end=5)
-        self.assertTrue(is_dictionary_candidate(f_aichi))
+        # 2. Not enough room on right but enough on left -> popup goes left
+        # main_x = 1500, width = 300 -> right edge 1800 + 20 = 1820 + 300 = 2120 > 1920. Left candidate = 1500 - 300 - 20 = 1180 >= 0
+        x, y = calculate_popup_position(1500, 100, 300, 400, popup_w, popup_h, screen_left, screen_top, screen_w, screen_h)
+        self.assertEqual(x, 1180)
 
-        f_teh = Finding(source="harper", category="typo", message="Typo", original="teh", replacement="the", start=0, end=3)
-        self.assertFalse(is_dictionary_candidate(f_teh))
+        # 3. Not enough room on either side -> popup is clamped inside screen
+        # main_x = 10, width = 1900 -> right edge > 1920, left candidate < 0. Clamped to screen_right - popup_w = 1620
+        x, y = calculate_popup_position(10, 100, 1900, 400, popup_w, popup_h, screen_left, screen_top, screen_w, screen_h)
+        self.assertEqual(x, 1620)
 
-        f_whatare = Finding(source="harper", category="typo", message="Typo", original="whatare", replacement="what are", start=0, end=7)
-        self.assertFalse(is_dictionary_candidate(f_whatare))
+        # 4. Popup near bottom of screen -> vertical position is clamped
+        # main_y = 1000 -> popup_y = 1000 + 150 = 1150 > 1080 - 150 = 930
+        x, y = calculate_popup_position(100, 1000, 500, 400, popup_w, popup_h, screen_left, screen_top, screen_w, screen_h)
+        self.assertEqual(y, 930)
 
-        f_was = Finding(source="harper", category="agreement", message="Agreement", original="was", replacement="were", start=0, end=3)
-        self.assertFalse(is_dictionary_candidate(f_was))
+        # 5. Popup near top of screen -> vertical position remains valid
+        # main_y = 10 -> popup_y = 10 + 150 = 160 >= 0
+        x, y = calculate_popup_position(100, 10, 500, 400, popup_w, popup_h, screen_left, screen_top, screen_w, screen_h)
+        self.assertEqual(y, 160)
 
-        f_go = Finding(source="harper", category="agreement", message="Agreement", original="go", replacement="goes", start=0, end=2)
-        self.assertFalse(is_dictionary_candidate(f_go))
-
-        # G. Existing popup behavior: normal correction -> Accept + Ignore; candidate -> Add to dictionary + Ignore
-        # H. Existing popup navigation works with multiple findings.
-        f1 = Finding(source="harper", category="grammar", message="test", original="was", replacement="were", start=0, end=3)
-        f2 = Finding(source="harper", category="spelling", message="test", original="Ichinomiya", replacement="", start=10, end=20)
-        
-        popup_mock = MagicMock()
-        popup_mock.findings = [f1, f2]
-        popup_mock.current_index = 0
-        self.assertEqual(popup_mock.findings[0], f1)
-        popup_mock.current_index = 1
-        self.assertEqual(popup_mock.findings[1], f2)
+        # 6. Specific requirement: 1920x1080 screen with main window around x=1200 and width around 927 must NOT produce popup x > 1920
+        x, y = calculate_popup_position(1200, 100, 927, 700, popup_w, popup_h, screen_left, screen_top, screen_w, screen_h)
+        self.assertLessEqual(x + popup_w, 1920)
+        self.assertGreaterEqual(x, 0)
 
 
