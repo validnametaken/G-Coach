@@ -75,6 +75,10 @@ HWND GetCurrentScintillaHwnd();
 std::string HandleProtocolRequest(const std::string& requestJson);
 
 // Plugin Export Functions required by Notepad++
+extern "C" __declspec(dllexport) BOOL isUnicode() {
+    return TRUE;
+}
+
 extern "C" __declspec(dllexport) void setInfo(NPP_DATA notepadData) {
     g_nppHwnd = notepadData._nppHandle;
 }
