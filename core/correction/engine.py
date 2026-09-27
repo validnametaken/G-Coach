@@ -35,6 +35,12 @@ class BackgroundCorrectionEngine:
             logger.error("Cannot apply correction: CorrectionTarget is None.")
             return False
 
+        # 0. 若为 Notepad++ 目标，优先通过 Phase 8G.6 原生插件命名管道桥接进行安全修正
+        from core.correction.npp_adapter import NppCorrectionAdapter
+        if NppCorrectionAdapter.is_notepad_target(target):
+            logger.info("Phase 8G.6: Notepad++ target detected; routing correction through NppCorrectionAdapter.")
+            return NppCorrectionAdapter.apply_bridge_correction(target, finding)
+
         # 1. 获取或绑定 UIA 元素
         element = target.element_ref
         if not element and platform.system() == "Windows":
@@ -90,14 +96,11 @@ class BackgroundCorrectionEngine:
         else:
             new_text = current_text[:start] + finding.replacement + current_text[end:]
 
-        # 5. 应用写入：若为 Notepad++ Scintilla 目标，严禁使用 UIA 写入 Wrapper，必须直接执行 Scintilla 降级写入
+        # 5. 应用写入
         success = False
         try:
             if element:
                 import uiautomation as auto
-                if BackgroundCorrectionEngine._is_scintilla_target(target, element):
-                    logger.info("Diagnostic: Notepad++ Scintilla-backed target detected; routing directly to Scintilla Win32 fallback (bypassing generic UIA write wrappers).")
-                    return BackgroundCorrectionEngine._apply_scintilla_fallback(target, finding, current_text)
 
                 applied = False
                 
