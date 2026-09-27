@@ -34,7 +34,9 @@ Notepad++ loads plugins from specific directories. For 64-bit Notepad++ on Windo
 ```text
 %APPDATA%\Notepad++\plugins\GCoachNppBridge\GCoachNppBridge.dll
 ```
-*(Note: Notepad++ expects each plugin to reside in a subfolder whose name matches the DLL name without extension, i.e., `GCoachNppBridge\GCoachNppBridge.dll`)*.
+*(Note: Notepad++ expects each plugin to reside in a subfolder whose name matches the DLL name without extension, i.e., `GCoachNppBridge\GCoachNppBridge.dll`).*
+
+*Initialization Note*: The plugin starts its secure Named Pipe server immediately upon loading inside `setInfo()`, guaranteeing that `\\.\pipe\gcoach_npp_bridge_session` is active as soon as Notepad++ initializes the plugin.*
 
 ---
 

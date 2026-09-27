@@ -81,6 +81,7 @@ extern "C" __declspec(dllexport) BOOL isUnicode() {
 
 extern "C" __declspec(dllexport) void setInfo(NPP_DATA notepadData) {
     g_nppHwnd = notepadData._nppHandle;
+    StartNamedPipeServer();
 }
 
 extern "C" __declspec(dllexport) const TCHAR* getName() {
@@ -100,10 +101,7 @@ extern "C" __declspec(dllexport) FuncItem* getFuncsArray(int* nbFuntions) {
 }
 
 extern "C" __declspec(dllexport) void beNotified(SCNotification* notification) {
-    if (notification->nmhdr.code == NPPN_READY) {
-        StartNamedPipeServer();
-    }
-    else if (notification->nmhdr.code == NPPN_SHUTDOWN) {
+    if (notification->nmhdr.code == NPPN_SHUTDOWN) {
         StopNamedPipeServer();
     }
 }
