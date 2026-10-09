@@ -1,0 +1,932 @@
+"""
+Unit tests for G-Coach UI Presenter and state formatting - Phase 6
+"""
+
+import unittest
+from core.analysis import Finding
+from core.monitoring import MonitorState
+from core.ui import UIPresenter
+
+
+class TestUIPresenter(unittest.TestCase):
+    """测试 UIPresenter 的状态格式化、摘要生成、finding 详情与冲突分组逻辑"""
+
+    def test_format_status(self):
+        self.assertEqual(UIPresenter.format_status("idle"), "Idle")
+        self.assertEqual(UIPresenter.format_status("waiting"), "Waiting")
+        self.assertEqual(UIPresenter.format_status("analyzing"), "Analyzing")
+        self.assertEqual(UIPresenter.format_status("ready"), "Ready")
+        self.assertEqual(UIPresenter.format_status("unsupported"), "Unsupported")
+        self.assertEqual(UIPresenter.format_status("error"), "Error")
+        self.assertEqual(UIPresenter.format_status("unknown"), "Unknown")
+
+    def test_format_app_info(self):
+        self.assertEqual(UIPresenter.format_app_info("Notepad", "Edit"), "Application: Notepad (Edit)")
+        self.assertEqual(UIPresenter.format_app_info("Word", ""), "Application: Word")
+        self.assertEqual(UIPresenter.format_app_info("", ""), "Application: Unknown")
+
+    def test_format_finding_summary(self):
+        f = Finding(
+            source="harper",
+            category="grammar",
+            message="Subject-verb agreement error",
+            original="go",
+            replacement="goes",
+            start=4,
+            end=6,
+            confidence=0.95,
+        )
+        summary = UIPresenter.format_finding_summary(f)
+        self.assertIn("go", summary)
+        self.assertIn("goes", summary)
+        self.assertIn("grammar", summary)
+        self.assertIn("harper", summary)
+
+    def test_format_finding_details(self):
+        f = Finding(
+            source="gector",
+            category="agreement",
+            message="Fix verb form",
+            original="go",
+            replacement="went",
+            start=4,
+            end=6,
+            confidence=0.88,
+        )
+        details = UIPresenter.format_finding_details(f)
+        self.assertEqual(details["Original"], "go")
+        self.assertEqual(details["Replacement"], "went")
+        self.assertEqual(details["Category"], "agreement")
+        self.assertEqual(details["Source Engine(s)"], "gector")
+        self.assertEqual(details["Confidence"], "0.88")
+
+    def test_group_findings_by_text_and_conflicts(self):
+        f1 = Finding(
+            source="harper",
+            category="grammar",
+            message="Suggestion 1",
+            original="go",
+            replacement="goes",
+            start=0,
+            end=2,
+        )
+        f2 = Finding(
+            source="gector",
+            category="grammar",
+            message="Suggestion 2",
+            original="go",
+            replacement="went",
+            start=0,
+            end=2,
+        )
+        f3 = Finding(
+            source="harper",
+            category="spelling",
+            message="Suggestion 3",
+            original="appple",
+            replacement="apple",
+            start=5,
+            end=11,
+        )
+
+        state = MonitorState(
+            generation=1,
+            text="She go to appple store",
+            findings=[f1, f2, f3],
+            status="ready",
+            app_name="Notepad",
+        )
+
+        summary = UIPresenter.format_state_summary(state)
+        self.assertEqual(summary["status_text"], "Ready")
+        self.assertEqual(summary["findings_count"], 3)
+        self.assertTrue(summary["has_conflicts"])  # "go" has two conflicting suggestions ("goes" vs "went")
+
+    def test_phase_6_x_polish_pending_states(self):
+        """测试 Phase 6.x UI 润色要求：等待/分析中状态、is_pending、提示消息及干净文本（零发现）"""
+        state_waiting = MonitorState(generation=2, text="Checking text", status="waiting")
+        summary_waiting = UIPresenter.format_state_summary(state_waiting)
+        self.assertTrue(summary_waiting["is_pending"])
+        self.assertIn("Waiting", summary_waiting["pending_message"])
+
+        state_analyzing = MonitorState(generation=2, text="Checking text", status="analyzing")
+        summary_analyzing = UIPresenter.format_state_summary(state_analyzing)
+        self.assertTrue(summary_analyzing["is_pending"])
+        self.assertIn("Checking", summary_analyzing["pending_message"])
+
+        state_clean_ready = MonitorState(generation=3, text="She goes to school.", findings=[], status="ready")
+        summary_clean = UIPresenter.format_state_summary(state_clean_ready)
+        self.assertFalse(summary_clean["is_pending"])
+        self.assertEqual(summary_clean["findings_count"], 0)
+        self.assertEqual(summary_clean["status_text"], "Ready")
+
+    def test_monitor_lifecycle_integration(self):
+        """测试监控器与分析管道的生命周期集成（Phase 8B 启动与关闭）"""
+        from core.analysis import AnalysisPipeline, AnalysisResolver, HarperAnalysisEngine
+        from core.monitoring import MockTextSource, LiveTextMonitor
+
+        pipeline = AnalysisPipeline()
+        pipeline.register_engine(HarperAnalysisEngine())
+        resolver = AnalysisResolver()
+        text_source = MockTextSource(initial_text="Hello world")
+        monitor = LiveTextMonitor(
+            text_source=text_source,
+            pipeline=pipeline,
+            resolver=resolver,
+            debounce_interval=0.05,
+            poll_interval=0.01,
+        )
+        self.assertFalse(monitor._is_running)
+        monitor.start()
+        self.assertTrue(monitor._is_running)
+        monitor.stop()
+        self.assertFalse(monitor._is_running)
+
+    def test_qmessagebox_imported_in_window(self):
+        """测试 window 模块中已成功导入 QMessageBox，防止 NameError 回归"""
+        from core.ui.window import GCoachWindow
+        import core.ui.window as window_module
+        self.assertTrue(hasattr(window_module, "QMessageBox"))
+
+    def test_phase_8e_popup_integration_logic(self):
+        """测试 Phase 8E 浮动纠正弹窗与 GCoachWindow 的集成逻辑（通过 Mock 隔离 Win32 无焦点窗口创建）"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from unittest.mock import patch, MagicMock
+        from core.analysis import AnalysisPipeline, AnalysisResolver, HarperAnalysisEngine
+        from core.monitoring import MockTextSource, LiveTextMonitor
+        from core.ui.window import GCoachWindow
+        from PyQt6.QtWidgets import QApplication
+
+        # 确保 QApplication 存在
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        pipeline = AnalysisPipeline()
+        pipeline.register_engine(HarperAnalysisEngine())
+        resolver = AnalysisResolver()
+        text_source = MockTextSource(initial_text="The students was very happy.")
+        monitor = LiveTextMonitor(
+            text_source=text_source,
+            pipeline=pipeline,
+            resolver=resolver,
+            debounce_interval=0.01,
+            poll_interval=0.01,
+        )
+
+        # 构建符合生产接口的 Mock Popup（支持 parent 参数验证）
+        class MockPopup:
+            def __init__(self, findings, current_index, target, on_accept, on_ignore, on_navigate=None, on_add_to_dict=None, parent=None):
+                self.parent_arg = parent
+                self.findings = findings
+                self.finding = findings[current_index] if findings else None
+                self.target = target
+                self.on_accept = on_accept
+                self.on_ignore = on_ignore
+                self.shown_x = 0
+                self.shown_y = 0
+                self.closed = False
+
+            def set_findings(self, findings, index=0):
+                self.findings = findings
+                self.finding = findings[index] if findings else None
+
+            def show_at(self, x: int, y: int):
+                self.shown_x = x
+                self.shown_y = y
+
+            def close(self):
+                self.closed = True
+
+            def sizeHint(self):
+                from PyQt6.QtCore import QSize
+                return QSize(250, 100)
+
+        window = GCoachWindow(monitor)
+        try:
+            with patch("core.ui.window.FloatingCorrectionPopup", MockPopup):
+                finding = Finding(
+                    source="Harper",
+                    category="grammar",
+                    message="Agreement error",
+                    original="was",
+                    replacement="were",
+                    start=13,
+                    end=16,
+                )
+                state = MonitorState(
+                    generation=1,
+                    text="The students was very happy.",
+                    findings=[finding],
+                    status="ready",
+                    control_id="mock-ctrl-1",
+                    app_name="MockApp",
+                )
+
+                window._sync_floating_popup([finding], state)
+
+                window.current_findings = [finding]
+                # 验证 findings 出现时弹窗是否被正确同步创建并配置（验证传入的 parent 是否为 None，确保其为顶级独立窗口）
+                self.assertIsNotNone(window.active_popup)
+                self.assertIsInstance(window.active_popup, MockPopup)
+                self.assertIsNone(window.active_popup.parent_arg)
+                self.assertEqual(window.last_popup_finding_id, window.current_findings[0].id)
+                self.assertEqual(window.active_popup.finding.original, window.current_findings[0].original)
+
+                # 验证 Accept / Ignore 回调与清理逻辑
+                finding = window.current_findings[0]
+                popup = window.active_popup
+                self.assertIsNotNone(popup)
+
+                window._handle_popup_ignore(finding)
+
+                self.assertTrue(popup.closed)
+                self.assertIsNone(window.active_popup)
+                self.assertIsNone(window.last_popup_finding_id)
+
+                # 回归测试：验证当 last_popup_finding_id 等于 finding.id 但 active_popup 为 None 时，_sync_floating_popup 会重新创建弹窗
+                window.last_popup_finding_id = finding.id
+                window.active_popup = None
+                state = monitor.get_state()
+                window._sync_floating_popup([finding], state)
+                self.assertIsNotNone(window.active_popup)
+                self.assertIsInstance(window.active_popup, MockPopup)
+        finally:
+            window.close()
+            monitor.stop()
+    def test_popup_reuse_with_semantic_signature(self):
+        """回归测试：验证当 findings 内容相同但 id 不同（每次分析重新实例化）时，_sync_floating_popup 会复用现有的 active_popup 而不重新创建"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from unittest.mock import patch
+        from core.analysis import AnalysisPipeline, AnalysisResolver, HarperAnalysisEngine
+        from core.monitoring import MockTextSource, LiveTextMonitor
+        from core.ui.window import GCoachWindow
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        pipeline = AnalysisPipeline()
+        pipeline.register_engine(HarperAnalysisEngine())
+        resolver = AnalysisResolver()
+        text_source = MockTextSource(initial_text="The students was happy.")
+        monitor = LiveTextMonitor(
+            text_source=text_source,
+            pipeline=pipeline,
+            resolver=resolver,
+            debounce_interval=0.01,
+            poll_interval=0.01,
+        )
+
+        class MockPopup:
+            def __init__(self, findings, current_index, target, on_accept, on_ignore, on_navigate=None, on_add_to_dict=None, parent=None):
+                self.findings = findings
+                self.finding = findings[current_index] if findings else None
+                self.shown = False
+                self.closed = False
+
+            def set_findings(self, findings, index=0):
+                self.findings = findings
+                self.finding = findings[index] if findings else None
+
+            def show_at(self, x: int, y: int):
+                self.shown = True
+
+            def close(self):
+                self.closed = True
+
+            def sizeHint(self):
+                from PyQt6.QtCore import QSize
+                return QSize(250, 100)
+
+        window = GCoachWindow(monitor)
+        try:
+            with patch("core.ui.window.FloatingCorrectionPopup", MockPopup):
+                f1 = Finding(
+                    source="Harper",
+                    category="grammar",
+                    message="Agreement",
+                    original="was",
+                    replacement="were",
+                    start=13,
+                    end=16,
+                )
+                state = MonitorState(generation=1, text="The students was happy.", findings=[f1], status="ready")
+                window._sync_floating_popup([f1], state)
+                popup1 = window.active_popup
+                self.assertIsNotNone(popup1)
+
+                # 模拟第二次轮询，生成具有相同语义内容但新随机 id 的 Finding
+                f2 = Finding(
+                    source="Harper",
+                    category="grammar",
+                    message="Agreement",
+                    original="was",
+                    replacement="were",
+                    start=13,
+                    end=16,
+                )
+                self.assertNotEqual(f1.id, f2.id)
+
+                window._sync_floating_popup([f2], state)
+                popup2 = window.active_popup
+                # 验证弹窗被复用，而不是被关闭重建
+                self.assertEqual(popup1, popup2)
+                self.assertFalse(popup1.closed)
+        finally:
+            window.close()
+            monitor.stop()
+
+
+    def test_floating_correction_popup_has_no_native_event_and_uses_qt_non_activation(self):
+        """回归测试：验证 FloatingCorrectionPopup 不再定义任何自定义 nativeEvent，且具备正确的 Qt 无激活标志与属性"""
+        from core.ui.floating_correction import FloatingCorrectionPopup, PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        self.assertFalse("nativeEvent" in FloatingCorrectionPopup.__dict__)
+
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        finding = Finding(
+            source="Harper",
+            category="grammar",
+            message="Test",
+            original="was",
+            replacement="were",
+            start=0,
+            end=3,
+        )
+        target = CorrectionTarget()
+        popup = FloatingCorrectionPopup(
+            findings=[finding],
+            current_index=0,
+            target=target,
+            on_accept=lambda f, t: None,
+            on_ignore=lambda f: None,
+            parent=None,
+        )
+        self.assertIsNone(popup.parent())
+        self.assertTrue(popup.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating))
+        self.assertTrue(popup.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus)
+        popup.close()
+
+    def test_floating_correction_popup_accept_click_triggers_callback(self):
+        """回归测试：验证点击 FloatingCorrectionPopup 的 Accept 按钮能够正确触发 _handle_accept 并调用上层 on_accept 回调"""
+        from core.ui.floating_correction import FloatingCorrectionPopup, PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication, QPushButton
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        finding = Finding(
+            source="Harper",
+            category="grammar",
+            message="Agreement",
+            original="was",
+            replacement="were",
+            start=0,
+            end=3,
+        )
+        target = CorrectionTarget()
+        accepted_findings = []
+        accepted_targets = []
+
+        def on_accept(f, t):
+            accepted_findings.append(f)
+            accepted_targets.append(t)
+
+        popup = FloatingCorrectionPopup(
+            findings=[finding],
+            current_index=0,
+            target=target,
+            on_accept=on_accept,
+            on_ignore=lambda f: None,
+            parent=None,
+        )
+
+        buttons = popup.findChildren(QPushButton)
+        accept_btn = None
+        for btn in buttons:
+            if "Accept" in btn.text():
+                accept_btn = btn
+                break
+
+        self.assertIsNotNone(accept_btn)
+        accept_btn.click()
+
+        self.assertEqual(len(accepted_findings), 1)
+        self.assertEqual(accepted_findings[0], finding)
+        self.assertEqual(accepted_targets[0], target)
+        popup.close()
+
+    def test_phase_8e_floating_popup_win32_style_safety(self):
+        """测试 FloatingCorrectionPopup 在 Windows 平台上的 Win32 样式修改安全防御机制"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from core.analysis import Finding
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        finding = Finding(
+            source="Harper",
+            category="grammar",
+            message="Test",
+            original="was",
+            replacement="were",
+            start=0,
+            end=3,
+        )
+        target = CorrectionTarget()
+        # 验证即使在非 Windows 平台或模拟异常下，弹窗创建也不会抛出异常
+        popup = FloatingCorrectionPopup(finding, target, lambda f, t: None, lambda f: None)
+        self.assertIsNotNone(popup)
+        popup.close()
+
+    def test_phase_8e_popup_config_h(self):
+        """测试 Phase 8E 诊断配置 H 是否能够正确无误地构造弹出窗口"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from core.analysis import Finding
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication
+        import os
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        old_test_env = os.environ.get("GCOACH_POPUP_TEST")
+        os.environ["GCOACH_POPUP_TEST"] = "H"
+        try:
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Test",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+            target = CorrectionTarget()
+            popup = FloatingCorrectionPopup(finding, target, lambda f, t: None, lambda f: None)
+            self.assertIsNotNone(popup)
+            popup.show_at(100, 100)
+            popup.close()
+        finally:
+            if old_test_env is not None:
+                os.environ["GCOACH_POPUP_TEST"] = old_test_env
+            else:
+                os.environ.pop("GCOACH_POPUP_TEST", None)
+
+    def test_phase_8e_popup_config_i(self):
+        """测试 Phase 8E 诊断配置 I 是否能够正确设置 FramelessWindowHint | Tool 标志且不调用 Win32 代码"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from core.analysis import Finding
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt
+        import os
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        old_test_env = os.environ.get("GCOACH_POPUP_TEST")
+        os.environ["GCOACH_POPUP_TEST"] = "I"
+        try:
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Test",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+            target = CorrectionTarget()
+            popup = FloatingCorrectionPopup(finding, target, lambda f, t: None, lambda f: None)
+            self.assertIsNotNone(popup)
+            flags = popup.windowFlags()
+            self.assertTrue(bool(flags & Qt.WindowType.FramelessWindowHint))
+            self.assertTrue(bool(flags & Qt.WindowType.Tool))
+            popup.show_at(100, 100)
+            popup.close()
+        finally:
+            if old_test_env is not None:
+                os.environ["GCOACH_POPUP_TEST"] = old_test_env
+            else:
+                os.environ.pop("GCOACH_POPUP_TEST", None)
+
+    def test_phase_8e_popup_config_j(self):
+        """测试 Phase 8E 诊断配置 J 是否能够正确设置 FramelessWindowHint | WindowStaysOnTopHint 标志且不调用 Win32 代码"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from core.analysis import Finding
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt
+        import os
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        old_test_env = os.environ.get("GCOACH_POPUP_TEST")
+        os.environ["GCOACH_POPUP_TEST"] = "J"
+        try:
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Test",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+            target = CorrectionTarget()
+            popup = FloatingCorrectionPopup(finding, target, lambda f, t: None, lambda f: None)
+            self.assertIsNotNone(popup)
+            flags = popup.windowFlags()
+            self.assertTrue(bool(flags & Qt.WindowType.FramelessWindowHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowStaysOnTopHint))
+            popup.show_at(100, 100)
+            popup.close()
+        finally:
+            if old_test_env is not None:
+                os.environ["GCOACH_POPUP_TEST"] = old_test_env
+            else:
+                os.environ.pop("GCOACH_POPUP_TEST", None)
+
+    def test_phase_8e_popup_config_k(self):
+        """测试 Phase 8E 诊断配置 K 是否能够正确设置 FramelessWindowHint | WindowStaysOnTopHint | WindowDoesNotAcceptFocus 标志且不调用 Win32 代码"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from core.analysis import Finding
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt
+        import os
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        old_test_env = os.environ.get("GCOACH_POPUP_TEST")
+        os.environ["GCOACH_POPUP_TEST"] = "K"
+        try:
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Test",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+            target = CorrectionTarget()
+            popup = FloatingCorrectionPopup(finding, target, lambda f, t: None, lambda f: None)
+            self.assertIsNotNone(popup)
+            flags = popup.windowFlags()
+            self.assertTrue(bool(flags & Qt.WindowType.FramelessWindowHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowStaysOnTopHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowDoesNotAcceptFocus))
+            popup.show_at(100, 100)
+            popup.close()
+        finally:
+            if old_test_env is not None:
+                os.environ["GCOACH_POPUP_TEST"] = old_test_env
+            else:
+                os.environ.pop("GCOACH_POPUP_TEST", None)
+
+    def test_phase_8e_popup_config_l(self):
+        """测试 Phase 8E 诊断配置 L 是否包含正确的 Qt 标志与 WA_ShowWithoutActivating 属性且包含 Qt.Tool"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from core.analysis import Finding
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt
+        import os
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        old_test_env = os.environ.get("GCOACH_POPUP_TEST")
+        os.environ["GCOACH_POPUP_TEST"] = "L"
+        try:
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Test",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+            target = CorrectionTarget()
+            popup = FloatingCorrectionPopup(finding, target, lambda f, t: None, lambda f: None)
+            self.assertIsNotNone(popup)
+            flags = popup.windowFlags()
+            self.assertTrue(bool(flags & Qt.WindowType.FramelessWindowHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowStaysOnTopHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowDoesNotAcceptFocus))
+            self.assertTrue(bool(flags & Qt.WindowType.Tool))
+            self.assertTrue(popup.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating))
+            popup.show_at(100, 100)
+            popup.close()
+        finally:
+            if old_test_env is not None:
+                os.environ["GCOACH_POPUP_TEST"] = old_test_env
+            else:
+                os.environ.pop("GCOACH_POPUP_TEST", None)
+
+    def test_phase_8e_popup_config_m(self):
+        """测试 Phase 8E 诊断配置 M 是否包含正确的 Qt 标志、WA_ShowWithoutActivating 属性以及安全的 winId 调用"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from core.analysis import Finding
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt
+        import os
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        old_test_env = os.environ.get("GCOACH_POPUP_TEST")
+        os.environ["GCOACH_POPUP_TEST"] = "M"
+        try:
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Test",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+            target = CorrectionTarget()
+            popup = FloatingCorrectionPopup(finding, target, lambda f, t: None, lambda f: None)
+            self.assertIsNotNone(popup)
+            flags = popup.windowFlags()
+            self.assertTrue(bool(flags & Qt.WindowType.FramelessWindowHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowStaysOnTopHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowDoesNotAcceptFocus))
+            self.assertTrue(bool(flags & Qt.WindowType.Tool))
+            self.assertTrue(popup.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating))
+            popup.show_at(100, 100)
+            popup.close()
+        finally:
+            if old_test_env is not None:
+                os.environ["GCOACH_POPUP_TEST"] = old_test_env
+            else:
+                os.environ.pop("GCOACH_POPUP_TEST", None)
+
+    def test_phase_8e_popup_config_n(self):
+        """测试 Phase 8E 诊断配置 N 是否包含正确的 Qt 标志、WA_ShowWithoutActivating 属性以及非干预性 nativeEvent 观察能力"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from core.analysis import Finding
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt
+        import os
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        old_test_env = os.environ.get("GCOACH_POPUP_TEST")
+        os.environ["GCOACH_POPUP_TEST"] = "N"
+        try:
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Test",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+            target = CorrectionTarget()
+            popup = FloatingCorrectionPopup(finding, target, lambda f, t: None, lambda f: None)
+            self.assertIsNotNone(popup)
+            flags = popup.windowFlags()
+            self.assertTrue(bool(flags & Qt.WindowType.FramelessWindowHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowStaysOnTopHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowDoesNotAcceptFocus))
+            self.assertTrue(bool(flags & Qt.WindowType.Tool))
+            self.assertTrue(popup.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating))
+            popup.show_at(100, 100)
+            popup.close()
+        finally:
+            if old_test_env is not None:
+                os.environ["GCOACH_POPUP_TEST"] = old_test_env
+            else:
+                os.environ.pop("GCOACH_POPUP_TEST", None)
+
+    def test_phase_8e_popup_config_o(self):
+        """测试 Phase 8E 诊断配置 O 是否包含正确的 Qt 标志、WA_ShowWithoutActivating 属性以及安全的 windowHandle 调用"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from core.analysis import Finding
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt
+        import os
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        old_test_env = os.environ.get("GCOACH_POPUP_TEST")
+        os.environ["GCOACH_POPUP_TEST"] = "O"
+        try:
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Test",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+            target = CorrectionTarget()
+            popup = FloatingCorrectionPopup(finding, target, lambda f, t: None, lambda f: None)
+            self.assertIsNotNone(popup)
+            flags = popup.windowFlags()
+            self.assertTrue(bool(flags & Qt.WindowType.FramelessWindowHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowStaysOnTopHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowDoesNotAcceptFocus))
+            self.assertTrue(bool(flags & Qt.WindowType.Tool))
+            self.assertTrue(popup.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating))
+            popup.show_at(100, 100)
+            popup.close()
+        finally:
+            if old_test_env is not None:
+                os.environ["GCOACH_POPUP_TEST"] = old_test_env
+            else:
+                os.environ.pop("GCOACH_POPUP_TEST", None)
+
+    def test_phase_8e_popup_config_p(self):
+        """测试 Phase 8E 诊断配置 P 是否包含正确的 Qt 标志、WA_ShowWithoutActivating 属性以及在 show 之后安全的 windowHandle 获取"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from core.analysis import Finding
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt
+        import os
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        old_test_env = os.environ.get("GCOACH_POPUP_TEST")
+        os.environ["GCOACH_POPUP_TEST"] = "P"
+        try:
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Test",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+            target = CorrectionTarget()
+            popup = FloatingCorrectionPopup(finding, target, lambda f, t: None, lambda f: None)
+            self.assertIsNotNone(popup)
+            flags = popup.windowFlags()
+            self.assertTrue(bool(flags & Qt.WindowType.FramelessWindowHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowStaysOnTopHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowDoesNotAcceptFocus))
+            self.assertTrue(bool(flags & Qt.WindowType.Tool))
+            self.assertTrue(popup.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating))
+            popup.show_at(100, 100)
+            popup.close()
+        finally:
+            if old_test_env is not None:
+                os.environ["GCOACH_POPUP_TEST"] = old_test_env
+            else:
+                os.environ.pop("GCOACH_POPUP_TEST", None)
+
+    def test_phase_8e_popup_config_q(self):
+        """测试 Phase 8E 诊断配置 Q 是否包含正确的 Qt 标志、WA_ShowWithoutActivating 属性以及真实的 Accept/Ignore 交互连接"""
+        from core.ui.window import PYQT_AVAILABLE
+        if not PYQT_AVAILABLE:
+            return
+
+        from core.ui.floating_correction import FloatingCorrectionPopup
+        from core.analysis import Finding
+        from core.correction.target import CorrectionTarget
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt
+        import os
+
+        app = QApplication.instance()
+        if not app:
+            app = QApplication([])
+
+        old_test_env = os.environ.get("GCOACH_POPUP_TEST")
+        os.environ["GCOACH_POPUP_TEST"] = "Q"
+        try:
+            finding = Finding(
+                source="Harper",
+                category="grammar",
+                message="Test",
+                original="was",
+                replacement="were",
+                start=0,
+                end=3,
+            )
+            target = CorrectionTarget()
+            accepted = []
+            ignored = []
+            popup = FloatingCorrectionPopup(
+                findings=[finding],
+                current_index=0,
+                target=target,
+                on_accept=lambda f, t=None: accepted.append((f, t)),
+                on_ignore=lambda f: ignored.append(f)
+            )
+            self.assertIsNotNone(popup)
+            flags = popup.windowFlags()
+            self.assertTrue(bool(flags & Qt.WindowType.FramelessWindowHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowStaysOnTopHint))
+            self.assertTrue(bool(flags & Qt.WindowType.WindowDoesNotAcceptFocus))
+            self.assertTrue(bool(flags & Qt.WindowType.Tool))
+            self.assertTrue(popup.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating))
+
+            # Simulate Accept click and Ignore click
+            popup._handle_accept()
+            self.assertEqual(len(accepted), 1)
+
+            popup._handle_ignore()
+            self.assertEqual(len(ignored), 1)
+
+            popup.show_at(100, 100)
+            popup.close()
+        finally:
+            if old_test_env is not None:
+                os.environ["GCOACH_POPUP_TEST"] = old_test_env
+            else:
+                os.environ.pop("GCOACH_POPUP_TEST", None)
+
+
+if __name__ == "__main__":
+    unittest.main()
