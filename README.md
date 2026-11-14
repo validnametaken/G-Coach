@@ -26,7 +26,7 @@ G-Coach, AI writing assistant, grammar correction tool, Windows desktop app, PyQ
 ## 项目结构 / Project Structure
 
 ```
-├── main.py                    # 程序入口
+├── gcoach.py                  # G-Coach 命令行启动器
 ├── requirements.txt           # Python 依赖
 ├── core/                      # 核心业务模块
 │   ├── analysis/              # 分析引擎（Harper、GECToR、Pipeline、Finding）
@@ -54,8 +54,10 @@ pip install -r requirements.txt
 
 ### 2. 运行应用
 ```bash
-python main.py
+python gcoach.py
 ```
+
+可通过 `python gcoach.py --help` 查看启动选项；需要排查问题时可使用 `python gcoach.py --log-level DEBUG`。
 
 ## 开源许可 / License
 

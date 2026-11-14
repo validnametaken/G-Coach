@@ -78,7 +78,7 @@ class AnalysisPipeline:
             )
             
             if is_in_dict:
-                logger.debug(f"Suppressing finding for dictionary word: '{orig}' (source: {f.source})")
+                logger.debug("Suppressing a personal-dictionary finding from source %s.", f.source)
                 continue
             
             filtered_findings.append(f)

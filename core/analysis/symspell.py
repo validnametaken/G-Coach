@@ -181,8 +181,9 @@ class SymSpellAnalysisEngine(BaseAnalysisEngine):
                                 },
                             )
                             findings.append(finding)
-            except Exception as e:
-                logger.debug(f"Error during SymSpell segmentation for token '{token}': {e}")
+            except Exception:
+                # Do not include the source token in logs; monitored text may be private.
+                logger.debug("SymSpell segmentation failed for a token.")
 
         findings.sort(key=lambda f: f.start)
         return findings

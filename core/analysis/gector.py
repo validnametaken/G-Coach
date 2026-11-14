@@ -219,7 +219,18 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
 
         offsets = encoding.offsets
         findings: List[Finding] = []
-        edits: List[Tuple[int, int, str, str, float, float, str]] = []
+        edits: List[Tuple[int, int, str, str, float, float, float, str]] = []
+
+        # GECToR can spread probability across mutually competing verb-form
+        # transforms (for example VB->VBZ and VB->VBD) even when it is very
+        # confident that a verb-form change is needed. Use the combined
+        # transform-family probability for thresholding, while retaining the
+        # selected label's raw probability for Finding confidence/reporting.
+        verb_transform_label_ids = [
+            label_id
+            for label_id, label in self._id_to_label.items()
+            if label.startswith("$TRANSFORM_VERB_") and 0 <= label_id < prob_l.shape[-1]
+        ]
 
         seq_len = min(len(encoding.ids), prob_d.shape[0], prob_l.shape[0], len(offsets))
 
@@ -248,7 +259,13 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
             if label_str == "$KEEP" or label_str == "<PAD>" or label_str == "$CORRECT" or not label_str:
                 continue
 
-            if lab_prob < self.lab_threshold:
+            lab_threshold_prob = lab_prob
+            if label_str.startswith("$TRANSFORM_VERB_"):
+                lab_threshold_prob = float(
+                    sum(float(prob_l[i][label_id]) for label_id in verb_transform_label_ids)
+                )
+
+            if lab_threshold_prob < self.lab_threshold:
                 continue
 
             # 获取检测概率（若有 2 类检测头，索引 1 代表 INCORRECT 概率）
@@ -282,14 +299,14 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
             else:
                 continue
 
-            edits.append((start_char, end_char, original, replacement, det_prob, lab_prob, label_str))
+            edits.append((start_char, end_char, original, replacement, det_prob, lab_prob, lab_threshold_prob, label_str))
 
         edits.sort(key=lambda x: x[0], reverse=True)
 
         updated_text = text
         has_changed = False
 
-        for start, end, original, replacement, det_prob, lab_prob, label_str in edits:
+        for start, end, original, replacement, det_prob, lab_prob, lab_threshold_prob, label_str in edits:
             if updated_text[start:end] != original:
                 continue
 
@@ -313,6 +330,7 @@ class GectorAnalysisEngine(BaseAnalysisEngine):
                     "gector_label": label_str,
                     "det_probability": det_prob,
                     "lab_probability": lab_prob,
+                    "lab_threshold_probability": lab_threshold_prob,
                     "pass_index": pass_idx,
                     "action_type": "replace" if replacement else "delete",
                 },

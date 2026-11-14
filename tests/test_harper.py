@@ -3,7 +3,10 @@ Unit tests for Phase 2 Harper Local Analysis Engine
 """
 
 import time
+import json
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 from core.analysis import Finding, BaseAnalysisEngine, AnalysisPipeline, HarperAnalysisEngine
 
 
@@ -84,6 +87,99 @@ class TestHarperAnalysisEngine(unittest.TestCase):
         # 引擎失效不应导致管道崩溃
         findings = pipeline.analyze("She go to school.")
         self.assertEqual(findings, [])
+
+    def test_all_harper_replacements_are_preserved_in_finding_metadata(self):
+        """The first replacement remains the default and all alternatives stay available to the UI."""
+        text = "They was ready."
+        start = text.index("was")
+        payload = [{
+            "original": "was",
+            "start": start,
+            "end": start + 3,
+            "replacements": ["were", "had been", "would be"],
+            "category": "Grammar",
+            "message": "Subject-verb agreement",
+        }]
+
+        with patch(
+            "core.analysis.harper.subprocess.run",
+            return_value=SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(payload).encode("utf-8"),
+                stderr=b"",
+            ),
+        ):
+            findings = HarperAnalysisEngine().analyze(text)
+
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].replacement, "were")
+        self.assertEqual(
+            findings[0].metadata["replacements"],
+            ["were", "had been", "would be"],
+        )
+
+    def test_uppercase_abbreviation_spelling_protection_is_preserved(self):
+        """Harper spelling lints must not turn uppercase abbreviations into misspellings."""
+        text = "MB is the unit abbreviation."
+        payload = [{
+            "original": "MB",
+            "start": 0,
+            "end": 2,
+            "replacements": ["megabytes"],
+            "category": "Spelling",
+            "message": "Possible spelling mistake",
+        }]
+
+        with patch(
+            "core.analysis.harper.subprocess.run",
+            return_value=SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(payload).encode("utf-8"),
+                stderr=b"",
+            ),
+        ):
+            findings = HarperAnalysisEngine().analyze(text)
+
+        self.assertEqual(findings, [])
+
+    def test_uppercase_word_choice_suggestions_are_not_suppressed(self):
+        """Contextual unit suggestions such as MB and GB must survive spelling protection."""
+        text = "The file is 10 MB and the disk is 16 GB."
+        mb_start = text.index("MB")
+        gb_start = text.index("GB")
+        payload = [
+            {
+                "original": "MB",
+                "start": mb_start,
+                "end": mb_start + 2,
+                "replacements": ["megabytes"],
+                "category": "Word Choice",
+                "message": "Did you mean megabytes?",
+            },
+            {
+                "original": "GB",
+                "start": gb_start,
+                "end": gb_start + 2,
+                "replacements": ["gigabytes"],
+                "category": "Word Choice",
+                "message": "Did you mean gigabytes?",
+            },
+        ]
+
+        with patch(
+            "core.analysis.harper.subprocess.run",
+            return_value=SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(payload).encode("utf-8"),
+                stderr=b"",
+            ),
+        ):
+            findings = HarperAnalysisEngine().analyze(text)
+
+        self.assertEqual(
+            [(finding.original, finding.replacement) for finding in findings],
+            [("MB", "megabytes"), ("GB", "gigabytes")],
+        )
 
     def test_finding_serialization_compatibility(self):
         findings = self.engine.analyze("She go to school.")

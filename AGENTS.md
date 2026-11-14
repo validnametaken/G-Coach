@@ -29,10 +29,12 @@ uiautomation>=2.0.29
 ## Development & Testing Commands
 - **Install Dependencies**: `pip install -r requirements.txt`
 - **Run Tests**: `pytest` or `python gcoach_test.py`
-- **Run Application**: `python main.py`
+- **Run Application**: `python gcoach.py`
+- **Verbose UI Diagnostics**: `python gcoach.py --log-level DEBUG`
 
 ## Coding & Style Guidelines
 - **Language**: Use clean, idiomatic English for all code, docstrings, comments, print statements, and documentation.
 - **Minimal Changes**: Keep implementations focused, robust, and minimally invasive.
 - **Thread Safety & UI**: Respect thread separation between background monitoring/analysis engines and the PyQt6 main thread.
+- **UI Automation COM**: `uiautomation` Control and Pattern wrappers must remain on the thread that created them. Capture, finding geometry, and correction must run on the `LiveTextMonitor` owner thread via `run_on_monitor_thread`; never put COM wrappers in `TextSnapshot`, `MonitorState`, or `CorrectionTarget`.
 

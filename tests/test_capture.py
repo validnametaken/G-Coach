@@ -3,6 +3,7 @@ Unit tests for Text Capture abstraction and Windows UI Automation capture - Phas
 """
 
 import unittest
+from unittest.mock import patch
 from core.monitoring import TextSnapshot, MockTextSource, MultiControlMockTextSource, WindowsUIAccessibilityTextSource
 
 
@@ -94,11 +95,78 @@ class TestTextCapture(unittest.TestCase):
 
     def test_windows_uia_text_source_non_windows_fallback(self):
         source = WindowsUIAccessibilityTextSource()
-        snapshot = source.get_current_text()
         import platform
         if platform.system() != "Windows":
+            snapshot = source.get_current_text()
             self.assertEqual(snapshot.status, "unsupported")
             self.assertIsNotNone(snapshot.error_message)
+        else:
+            try:
+                snapshot = source.get_current_text()
+                self.assertIn(snapshot.status, {"ready", "unsupported"})
+            finally:
+                source.uninitialize_for_current_thread()
+
+    def test_windows_capture_never_publishes_a_com_control_reference(self):
+        source = WindowsUIAccessibilityTextSource()
+        source._is_windows = True
+        fake_control = object()
+        captured = {
+            "text": "safe snapshot",
+            "app_name": "editor.exe",
+            "control_info": "EditControl",
+            "control_id": "pid:10-hwnd:20-autoid:editor-type:EditControl-name:",
+            "control_type": "EditControl",
+            "process_id": 10,
+            "is_editable": True,
+            "metadata": {
+                "hwnd": 20,
+                "automation_id": "editor",
+                "control_name": "Main editor",
+                "element_ref": fake_control,
+            },
+        }
+
+        with patch.object(source, "initialize_for_current_thread"), \
+             patch.object(source, "_fetch_focused_control_via_uia", return_value=captured):
+            snapshot = source.get_current_text()
+
+        self.assertEqual(snapshot.text, "safe snapshot")
+        self.assertEqual(snapshot.metadata["hwnd"], 20)
+        self.assertEqual(snapshot.metadata["control_name"], "Main editor")
+        self.assertNotIn("element_ref", snapshot.metadata)
+
+    def test_one_off_windows_capture_releases_its_temporary_uia_apartment(self):
+        source = WindowsUIAccessibilityTextSource()
+        source._is_windows = True
+        lifecycle = []
+
+        def initialize():
+            source._uia_thread_id = __import__("threading").get_ident()
+            lifecycle.append("initialize")
+
+        def uninitialize():
+            lifecycle.append("uninitialize")
+            source._uia_thread_id = None
+
+        source.initialize_for_current_thread = initialize
+        source.uninitialize_for_current_thread = uninitialize
+        source._fetch_focused_control_via_uia = lambda: {
+            "text": "temporary",
+            "app_name": "editor.exe",
+            "control_info": "EditControl",
+            "control_id": "pid:10-hwnd:20-autoid:editor-type:EditControl-name:",
+            "control_type": "EditControl",
+            "process_id": 10,
+            "is_editable": True,
+            "metadata": {"hwnd": 20, "automation_id": "editor"},
+        }
+
+        snapshot = source.get_current_text()
+
+        self.assertEqual(snapshot.text, "temporary")
+        self.assertEqual(lifecycle, ["initialize", "uninitialize"])
+        self.assertIsNone(source._uia_thread_id)
 
     def test_phase_8d_multi_application_robustness_mock(self):
         """测试 Phase 8D 多应用混淆与健壮性验证（通过多控件 Mock 源模拟 Telegram、ChatGPT、Firefox 搜索/地址栏切换）"""

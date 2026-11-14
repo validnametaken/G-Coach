@@ -6,20 +6,275 @@ G-Coach Floating Correction Popup (PyQt6) - Phase 8E
 
 import logging
 import platform
+from dataclasses import replace as dataclass_replace
 from typing import Optional, Callable, Any, Tuple, Union, List
 from core.dictionary import is_dictionary_candidate
 
 logger = logging.getLogger(__name__)
 
 try:
-    from PyQt6.QtCore import Qt, QPoint
-    from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+    from PyQt6.QtCore import (
+        QAbstractNativeEventFilter,
+        QCoreApplication,
+        Qt,
+        QPoint,
+    )
+    from PyQt6.QtWidgets import (
+        QWidget,
+        QVBoxLayout,
+        QHBoxLayout,
+        QLabel,
+        QPushButton,
+        QComboBox,
+    )
     from PyQt6.QtGui import QMouseEvent
     PYQT_AVAILABLE = True
 except (ImportError, OSError) as e:
     logger.warning(f"PyQt6 not available for FloatingCorrectionPopup: {e}")
     PYQT_AVAILABLE = False
     QWidget = object  # type: ignore
+
+
+def _apply_windows_no_activate(widget: Any) -> bool:
+    """Make a floating widget topmost without activating it on Windows.
+
+    Do not rely on Qt's WindowStaysOnTopHint for these windows: Qt may apply
+    that hint through a separate z-order operation while showing the widget.
+    Apply both WS_EX_NOACTIVATE and HWND_TOPMOST through one native operation
+    carrying SWP_NOACTIVATE, before and after the Qt show path.
+    """
+    if platform.system() != "Windows":
+        return True
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        hwnd = wintypes.HWND(int(widget.winId()))
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            get_window_long = user32.GetWindowLongPtrW
+            set_window_long = user32.SetWindowLongPtrW
+            long_type = ctypes.c_ssize_t
+        else:
+            get_window_long = user32.GetWindowLongW
+            set_window_long = user32.SetWindowLongW
+            long_type = wintypes.LONG
+
+        get_window_long.argtypes = (wintypes.HWND, ctypes.c_int)
+        get_window_long.restype = long_type
+        set_window_long.argtypes = (wintypes.HWND, ctypes.c_int, long_type)
+        set_window_long.restype = long_type
+
+        gwl_exstyle = -20
+        ws_ex_noactivate = 0x08000000
+        ctypes.set_last_error(0)
+        current_style = get_window_long(hwnd, gwl_exstyle)
+        if current_style == 0 and ctypes.get_last_error():
+            raise ctypes.WinError(ctypes.get_last_error())
+
+        required_style = current_style | ws_ex_noactivate
+        if required_style != current_style:
+            ctypes.set_last_error(0)
+            previous_style = set_window_long(hwnd, gwl_exstyle, required_style)
+            if previous_style == 0 and ctypes.get_last_error():
+                raise ctypes.WinError(ctypes.get_last_error())
+
+        user32.SetWindowPos.argtypes = (
+            wintypes.HWND,
+            wintypes.HWND,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            wintypes.UINT,
+        )
+        user32.SetWindowPos.restype = wintypes.BOOL
+        swp_nosize = 0x0001
+        swp_nomove = 0x0002
+        swp_noactivate = 0x0010
+        swp_framechanged = 0x0020
+        flags = (
+            swp_nosize
+            | swp_nomove
+            | swp_noactivate
+            | swp_framechanged
+        )
+        hwnd_topmost = wintypes.HWND(-1)  # HWND_TOPMOST
+        if not user32.SetWindowPos(hwnd, hwnd_topmost, 0, 0, 0, 0, flags):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+        return True
+    except Exception:
+        logger.exception("Unable to enforce WS_EX_NOACTIVATE for G-Coach popup window.")
+        return False
+
+
+if PYQT_AVAILABLE:
+    class _NonActivatingPopupMouseFilter(QAbstractNativeEventFilter):
+        """Keep Windows from discarding the click that opens an inactive popup.
+
+        Qt's non-activating top-level windows can receive WM_MOUSEACTIVATE
+        before the actual mouse-button message. MA_NOACTIVATEANDEAT preserves
+        the no-focus behavior but discards that click. Return MA_NOACTIVATE
+        for this dropdown only: it still does not activate, but the click is
+        delivered to the list view.
+        """
+
+        WM_MOUSEACTIVATE = 0x0021
+        MA_NOACTIVATE = 3
+
+        def __init__(self):
+            super().__init__()
+            self._popup_hwnd = 0
+            self._popup_owner_hwnd = 0
+
+        def set_popup_hwnd(self, hwnd: int, owner_hwnd: int = 0) -> None:
+            self._popup_hwnd = int(hwnd or 0)
+            self._popup_owner_hwnd = int(owner_hwnd or 0)
+
+        def _is_popup_related(self, hwnd: int) -> bool:
+            if not hwnd:
+                return False
+            relevant_hwnds = {
+                value
+                for value in (self._popup_hwnd, self._popup_owner_hwnd)
+                if value
+            }
+            if hwnd in relevant_hwnds:
+                return True
+
+            try:
+                import ctypes
+                from ctypes import wintypes
+
+                user32 = ctypes.WinDLL("user32", use_last_error=True)
+                user32.GetAncestor.argtypes = (wintypes.HWND, wintypes.UINT)
+                user32.GetAncestor.restype = wintypes.HWND
+                # WM_MOUSEACTIVATE may identify a child HWND. Resolve both its
+                # top-level window and root owner before deciding it is unrelated.
+                for ancestor_kind in (2, 3):  # GA_ROOT, GA_ROOTOWNER
+                    ancestor = int(
+                        user32.GetAncestor(wintypes.HWND(hwnd), ancestor_kind) or 0
+                    )
+                    if ancestor in relevant_hwnds:
+                        return True
+            except Exception as exc:
+                logger.debug("Could not resolve popup ancestry for HWND %s: %s", hwnd, exc)
+            return False
+
+        def nativeEventFilter(self, event_type, message):
+            if not self._popup_hwnd or bytes(event_type) != b"windows_generic_MSG":
+                return False, 0
+
+            try:
+                import ctypes
+                from ctypes import wintypes
+
+                message_address = int(message)
+                native_message = ctypes.cast(
+                    message_address,
+                    ctypes.POINTER(wintypes.MSG),
+                ).contents
+                if int(native_message.message) != self.WM_MOUSEACTIVATE:
+                    return False, 0
+
+                # WM_MOUSEACTIVATE may be delivered to the popup itself or to
+                # a child which identifies the popup or its root owner as the
+                # top-level parent. Qt's combo container is an owned window,
+                # so Windows can report the floating correction window here.
+                message_hwnd = int(native_message.hWnd or 0)
+                parent_hwnd = int(native_message.wParam or 0)
+                if not (
+                    self._is_popup_related(message_hwnd)
+                    or self._is_popup_related(parent_hwnd)
+                ):
+                    return False, 0
+
+                return True, self.MA_NOACTIVATE
+            except Exception as exc:
+                logger.debug("Could not inspect popup mouse-activation message: %s", exc)
+                return False, 0
+
+
+    class NonActivatingComboBox(QComboBox):
+        """Combo box whose native dropdown does not activate the G-Coach process.
+
+        The floating correction window deliberately does not accept focus so the
+        editor underneath it (for example, Notepad) remains the foreground app.
+        QComboBox creates a separate native popup window for its choices; give
+        that window the same non-activating behavior or opening the list can
+        disturb focus tracking in the target editor.
+        """
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self._mouse_activation_filter = None
+            self._mouse_activation_filter_app = None
+            if platform.system() == "Windows":
+                app = QCoreApplication.instance()
+                if app is not None:
+                    self._mouse_activation_filter = _NonActivatingPopupMouseFilter()
+                    self._mouse_activation_filter_app = app
+                    app.installNativeEventFilter(self._mouse_activation_filter)
+                    self.destroyed.connect(self._remove_mouse_activation_filter)
+            self._configure_popup_window()
+
+        def _remove_mouse_activation_filter(self, *_args):
+            app = self._mouse_activation_filter_app
+            event_filter = self._mouse_activation_filter
+            if app is not None and event_filter is not None:
+                app.removeNativeEventFilter(event_filter)
+            self._mouse_activation_filter = None
+            self._mouse_activation_filter_app = None
+
+        def _track_popup_window(self, popup_window):
+            popup_hwnd = int(popup_window.winId())
+            owner_hwnd = 0
+            if platform.system() == "Windows" and self._mouse_activation_filter is not None:
+                try:
+                    import ctypes
+                    from ctypes import wintypes
+
+                    user32 = ctypes.WinDLL("user32", use_last_error=True)
+                    user32.GetAncestor.argtypes = (wintypes.HWND, wintypes.UINT)
+                    user32.GetAncestor.restype = wintypes.HWND
+                    # GA_ROOTOWNER: walk the popup's parent and owner chain.
+                    owner_hwnd = int(
+                        user32.GetAncestor(wintypes.HWND(popup_hwnd), 3) or 0
+                    )
+                    if owner_hwnd == popup_hwnd:
+                        owner_hwnd = 0
+                except Exception as exc:
+                    logger.debug("Could not resolve the dropdown's root owner: %s", exc)
+
+            if self._mouse_activation_filter is not None:
+                self._mouse_activation_filter.set_popup_hwnd(popup_hwnd, owner_hwnd)
+
+        def _configure_popup_window(self):
+            popup_window = self.view().window()
+            flags = popup_window.windowFlags() | Qt.WindowType.WindowDoesNotAcceptFocus
+            if platform.system() == "Windows":
+                flags &= ~Qt.WindowType.WindowStaysOnTopHint
+            if flags != popup_window.windowFlags():
+                popup_window.setWindowFlags(flags)
+            popup_window.setAttribute(
+                Qt.WidgetAttribute.WA_ShowWithoutActivating, True
+            )
+            self._native_popup_ready = _apply_windows_no_activate(popup_window)
+            self._track_popup_window(popup_window)
+
+        def showPopup(self):
+            self._configure_popup_window()
+            if not self._native_popup_ready:
+                logger.error("Alternative dropdown suppressed because non-activation could not be guaranteed.")
+                return
+            super().showPopup()
+            popup_window = self.view().window()
+            self._track_popup_window(popup_window)
+            if not _apply_windows_no_activate(popup_window):
+                self.hidePopup()
 
 
 class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
@@ -41,6 +296,7 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         on_navigate: Optional[Callable[[int], None]] = None,
         on_add_to_dict: Optional[Callable[[Any], None]] = None,
         parent: Optional[QWidget] = None,
+        on_accept_all: Optional[Callable[[List[Any], Any], None]] = None,
     ):
         if not PYQT_AVAILABLE:
             raise RuntimeError("PyQt6 is required for FloatingCorrectionPopup.")
@@ -57,6 +313,8 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         self.on_ignore = on_ignore
         self.on_navigate = on_navigate
         self.on_add_to_dict = on_add_to_dict
+        self.on_accept_all = on_accept_all
+        self._displayed_finding_id = None
 
         import os
         config_mode = os.environ.get("GCOACH_POPUP_TEST", "A").strip().upper()
@@ -283,7 +541,9 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         tool_flag = Qt.WindowType.Tool if config_mode != "E" else Qt.WindowType.Window
         focus_flag = Qt.WindowType.WindowDoesNotAcceptFocus if config_mode not in ("C", "D") else Qt.WindowType(0)
 
-        flags = tool_flag | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
+        flags = tool_flag | Qt.WindowType.FramelessWindowHint
+        if platform.system() != "Windows":
+            flags |= Qt.WindowType.WindowStaysOnTopHint
         if focus_flag:
             flags |= focus_flag
 
@@ -374,7 +634,31 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         self.title_label.setWordWrap(True)
         layout.addWidget(self.title_label)
 
-        # 按钮行 (Accept / Add to dictionary / Ignore)
+        # Harper can return several valid replacements for one finding. Keep
+        # its first suggestion as the default while allowing the user to pick
+        # another option without changing the shared Finding object.
+        alternatives_layout = QHBoxLayout()
+        alternatives_layout.setContentsMargins(0, 0, 0, 0)
+        alternatives_layout.setSpacing(6)
+        self.alternatives_label = QLabel("Alternative:", self)
+        self.alternatives_label.setStyleSheet(
+            "color: #7f8c8d; border: none; font-size: 11px;"
+        )
+        alternatives_layout.addWidget(self.alternatives_label)
+        self.replacement_combo = NonActivatingComboBox(self)
+        self.replacement_combo.setObjectName("replacementOptions")
+        self.replacement_combo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.replacement_combo.setMinimumWidth(180)
+        self.replacement_combo.currentIndexChanged.connect(
+            self._handle_replacement_changed
+        )
+        alternatives_layout.addWidget(self.replacement_combo, 1)
+        layout.addLayout(alternatives_layout)
+        self.alternatives_label.setVisible(False)
+        self.replacement_combo.setVisible(False)
+
+        # 按钮行 (Accept / Add to dictionary / Ignore)。对有拼写建议的词，
+        # 用户可以选择接受建议，也可以将原词加入个人词典。
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(6)
 
@@ -394,15 +678,102 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
 
         layout.addLayout(btn_layout)
 
+        self.accept_all_btn = QPushButton("Accept all safe suggestions", self)
+        self.accept_all_btn.setToolTip(
+            "Apply independent, non-overlapping suggestions in one pass, then recheck the document once."
+        )
+        self.accept_all_btn.clicked.connect(self._handle_accept_all)
+        self.accept_all_btn.setVisible(len(self.findings) > 1 and self.on_accept_all is not None)
+        layout.addWidget(self.accept_all_btn)
+
         self._update_content()
         self.adjustSize()
+
+    @staticmethod
+    def _get_replacement_options(finding: Any) -> List[str]:
+        """Return distinct Harper replacements, keeping its best choice first."""
+        if not finding or str(getattr(finding, "source", "")).lower() != "harper":
+            return []
+
+        metadata = getattr(finding, "metadata", None)
+        raw_options = metadata.get("replacements", []) if isinstance(metadata, dict) else []
+        if not isinstance(raw_options, (list, tuple)):
+            raw_options = []
+
+        options: List[str] = []
+        for candidate in [getattr(finding, "replacement", ""), *raw_options]:
+            if not isinstance(candidate, str) or not candidate.strip():
+                continue
+            if candidate not in options:
+                options.append(candidate)
+        return options
+
+    def _selected_replacement(self, finding: Any) -> str:
+        """Return the visible user choice, falling back to Harper's best choice."""
+        if finding is self.finding and self.replacement_combo.count() > 0:
+            selected = self.replacement_combo.currentData()
+            if isinstance(selected, str):
+                return selected
+        return getattr(finding, "replacement", "") if finding else ""
+
+    def _finding_with_selected_replacement(self, finding: Any) -> Any:
+        """Copy the current finding only when the user chose another replacement."""
+        selected = self._selected_replacement(finding)
+        if finding is not None and selected != finding.replacement:
+            return dataclass_replace(finding, replacement=selected)
+        return finding
+
+    @staticmethod
+    def _sync_accepted_finding(original: Any, applied: Any) -> None:
+        """Keep the popup's shared finding in sync after a copied choice succeeds."""
+        if original is not None and applied is not original and applied.status == "accepted":
+            original.replacement = applied.replacement
+            original.status = applied.status
+
+    def _handle_replacement_changed(self, *_args):
+        finding = self.finding
+        if finding:
+            replacement = self._selected_replacement(finding)
+            original = finding.original
+            if replacement and replacement.strip():
+                action_text = (
+                    f'Change "{original}" to "{replacement}"'
+                    if original
+                    else f'Insert "{replacement}"'
+                )
+            else:
+                action_text = f'Unknown word: "{original}"' if original else "Unknown word"
+            self.title_label.setText(action_text)
 
     def _update_content(self):
         """更新当前展示的 finding 文本及导航按钮状态"""
         f = self.finding
         if f:
             original = f.original
-            replacement = f.replacement
+            options = self._get_replacement_options(f)
+            previous_selection = (
+                self.replacement_combo.currentData()
+                if self._displayed_finding_id == getattr(f, "id", None)
+                else None
+            )
+
+            blocked = self.replacement_combo.blockSignals(True)
+            self.replacement_combo.clear()
+            for option in options:
+                self.replacement_combo.addItem(option, option)
+            if options:
+                if previous_selection in options:
+                    selected_index = options.index(previous_selection)
+                else:
+                    selected_index = 0
+                self.replacement_combo.setCurrentIndex(selected_index)
+            self.replacement_combo.blockSignals(blocked)
+            show_alternatives = len(options) > 1
+            self.alternatives_label.setVisible(show_alternatives)
+            self.replacement_combo.setVisible(show_alternatives)
+            self._displayed_finding_id = getattr(f, "id", None)
+
+            replacement = self._selected_replacement(f)
             if replacement and replacement.strip():
                 action_text = f"Change \"{original}\" to \"{replacement}\"" if original else f"Insert \"{replacement}\""
             else:
@@ -410,18 +781,22 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
             
             self.title_label.setText(action_text)
             
+            has_replacement = bool(options or (replacement and replacement.strip()))
             is_cand = is_dictionary_candidate(f)
-            if is_cand:
-                self.add_to_dict_btn.setVisible(True)
-                self.accept_btn.setVisible(False)
-                self.add_to_dict_btn.setEnabled(True)
-                self.ignore_btn.setEnabled(True)
-            else:
-                self.add_to_dict_btn.setVisible(False)
-                self.accept_btn.setVisible(True)
-                self.accept_btn.setEnabled(True)
-                self.ignore_btn.setEnabled(True)
+
+            # A spelling finding can be both a valid correction and a possible
+            # personal-dictionary word. Keep both actions available when it has
+            # a suggested replacement (e.g. "doiing" -> "doing").
+            self.accept_btn.setVisible(has_replacement)
+            self.accept_btn.setEnabled(has_replacement)
+            self.add_to_dict_btn.setVisible(is_cand)
+            self.add_to_dict_btn.setEnabled(is_cand)
+            self.ignore_btn.setEnabled(True)
         else:
+            self.replacement_combo.clear()
+            self.replacement_combo.setVisible(False)
+            self.alternatives_label.setVisible(False)
+            self._displayed_finding_id = None
             self.title_label.setText("No suggestions")
             self.add_to_dict_btn.setVisible(False)
             self.accept_btn.setVisible(True)
@@ -443,6 +818,10 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
         """更新当前 findings 列表与索引并刷新显示"""
         self.findings = findings or []
         self.current_index = max(0, min(current_index, len(self.findings) - 1)) if self.findings else 0
+        if hasattr(self, "accept_all_btn"):
+            self.accept_all_btn.setVisible(
+                len(self.findings) > 1 and self.on_accept_all is not None
+            )
         self._update_content()
         self.adjustSize()
 
@@ -468,86 +847,58 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
 
     def show_at(self, x: int, y: int):
         """在屏幕指定坐标（通常靠近文本错误位置）显示弹窗，绝不抢焦"""
-        import os
-        config_mode = os.environ.get("GCOACH_POPUP_TEST", "A").strip().upper()
-        if config_mode in ("H", "I", "J", "K", "L", "M", "N", "O"):
-            prefix = config_mode
-            print(f"{prefix} show_at entered")
-            print(f"{prefix} move completed")
-            self.move(x, y)
-            print(f"{prefix} show entered")
-            self.show()
-            print(f"{prefix} show completed")
-            return
-
-        if config_mode == "P":
-            print("P show_at entered")
-            print("P move completed")
-            self.move(x, y)
-            print("P before show")
-            self.show()
-            print("P after show")
-            window_handle = self.windowHandle()
-            print(f"P windowHandle after show: {window_handle}")
-            return
-
-        if config_mode == "Q":
-            print("[Phase8E Q] popup shown")
-            print("before move")
-            self.move(x, y)
-            print("after move")
-            print("before show")
-            self.show()
-            print("show returned")
-            print("after show")
-            print("before query isVisible")
-            vis = self.isVisible()
-            print(f"after query isVisible: {vis}")
-            print("before query isWindow")
-            is_win = self.isWindow()
-            print(f"after query isWindow: {is_win}")
-            print("before query parent")
-            par = self.parent()
-            print(f"after query parent: {par}")
-            print("before query geometry")
-            geom = self.geometry()
-            print(f"after query geometry: {geom}")
-            print("before query pos")
-            p = self.pos()
-            print(f"after query pos: {p}")
-            print("before query size")
-            sz = self.size()
-            print(f"after query size: {sz}")
-            print("before query windowFlags")
-            wf = self.windowFlags()
-            print(f"after query windowFlags: {wf}")
-            print("[Phase8E Q] waiting for interaction")
-            return
-
-        print("[Phase8E isolation] show_at entered")
-        print("[Phase8E isolation] move entered")
         self.move(x, y)
-        print("[Phase8E isolation] move completed")
-        print("[Phase8E isolation] show entered")
+        # Force native HWND creation while hidden, then apply WS_EX_NOACTIVATE
+        # before QWidget.show() can ask Windows to display the popup.
+        if not _apply_windows_no_activate(self):
+            logger.error("Floating correction popup suppressed: native no-activation could not be enforced.")
+            return
         self.show()
-        print("[Phase8E isolation] show completed")
+        # Re-apply after Qt's show path in case the platform plugin adjusted styles.
+        # The pre-show call is the important guard against transient activation.
+        if not _apply_windows_no_activate(self):
+            self.hide()
+            logger.error("Floating correction popup hidden: native no-activation style was not retained.")
+            return
 
 
 
     def _handle_accept(self):
         """点击 Accept：触发回调并关闭弹窗"""
         print("[Phase8E Click Diagnostic] FloatingCorrectionPopup._handle_accept() entered")
+        original_finding = self.finding
+        applied_finding = self._finding_with_selected_replacement(original_finding)
         try:
             if self.on_accept:
                 print("[Phase8E Click Diagnostic] invoking on_accept callback")
-                self.on_accept(self.finding, self.target)
+                self.on_accept(applied_finding, self.target)
                 print("[Phase8E Click Diagnostic] on_accept callback completed")
             else:
                 print("[Phase8E Click Diagnostic] warning: on_accept is None")
         except Exception as e:
             logger.error(f"Error handling floating popup accept: {e}", exc_info=True)
             print(f"[Phase8E Click Diagnostic] Error in _handle_accept: {e}")
+        finally:
+            self._sync_accepted_finding(original_finding, applied_finding)
         print("[Phase8E Click Diagnostic] calling self.close()")
+        self.close()
+
+    def _handle_accept_all(self):
+        """Apply all independent suggestions through one verified batch operation."""
+        original_findings = list(self.findings)
+        findings = list(original_findings)
+        try:
+            if self.on_accept_all:
+                if 0 <= self.current_index < len(findings):
+                    findings[self.current_index] = self._finding_with_selected_replacement(
+                        findings[self.current_index]
+                    )
+                self.on_accept_all(findings, self.target)
+        except Exception as exc:
+            logger.error("Error handling floating popup accept-all: %s", exc, exc_info=True)
+        finally:
+            for original, applied in zip(original_findings, findings):
+                self._sync_accepted_finding(original, applied)
         self.close()
 
     def _handle_ignore(self):
@@ -578,10 +929,10 @@ class FloatingCorrectionPopup(QWidget if PYQT_AVAILABLE else object):
 
 
 def calculate_popup_position(
-    main_x: int,
-    main_y: int,
-    main_width: int,
-    main_height: int,
+    anchor_x: int,
+    anchor_y: int,
+    anchor_width: int,
+    anchor_height: int,
     popup_width: int,
     popup_height: int,
     screen_left: int,
@@ -590,24 +941,27 @@ def calculate_popup_position(
     screen_height: int,
     gap: int = 20,
 ) -> Tuple[int, int]:
-    """计算悬浮弹窗的屏幕安全坐标（优先右侧，其次左侧，支持双向水平及垂直防溢出裁剪）。"""
+    """Place the popup beside an anchor rectangle while keeping it on-screen."""
     screen_right = screen_left + screen_width
     screen_bottom = screen_top + screen_height
 
-    # 1. 优先尝试右侧
-    popup_x = main_x + main_width + gap
-    
-    # 2. 如果右侧空间不足，尝试左侧
+    # Prefer the right side of the text/control, then the left side.
+    popup_x = anchor_x + anchor_width + gap
     if popup_x + popup_width > screen_right:
-        left_candidate = main_x - popup_width - gap
+        left_candidate = anchor_x - popup_width - gap
         if left_candidate >= screen_left:
             popup_x = left_candidate
         else:
-            # 两侧都不足：在屏幕内夹紧
             popup_x = max(screen_left, min(popup_x, screen_right - popup_width))
 
-    # 3. 垂直位置（默认主窗口 y + 150）
-    popup_y = main_y + 150
-    popup_y = max(screen_top, min(popup_y, screen_bottom - popup_height))
+    # Keep the popup below the text where possible; otherwise put it above.
+    below = anchor_y + anchor_height + gap
+    above = anchor_y - popup_height - gap
+    if below + popup_height <= screen_bottom:
+        popup_y = below
+    elif above >= screen_top:
+        popup_y = above
+    else:
+        popup_y = max(screen_top, min(below, screen_bottom - popup_height))
 
     return (popup_x, popup_y)

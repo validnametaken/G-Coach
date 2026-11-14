@@ -120,7 +120,8 @@ def run_diagnostic():
     print(f"\n==================================================")
     print("=== SUMMARY COMPARISON TABLE ===")
     print(f"==================================================")
-    print(f"{'Test':<35} | {'GECToR \". -> .What\"?':<20} | {'$APPEND_What?':<15} | {'Other GECToR findings':<30}")
+    col2 = 'GECToR ". -> .What"?'
+    print(f"{'Test':<35} | {col2:<20} | {'$APPEND_What?':<15} | {'Other GECToR findings':<30}")
     print("-" * 110)
     for row in summary_results:
         print(f"{row['test']:<35} | {row['dot_what']:<20} | {row['append_what']:<15} | {row['other']:<30}")

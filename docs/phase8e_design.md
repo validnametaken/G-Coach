@@ -35,16 +35,16 @@ G-Coach should operate without stealing focus:
   - **Browsers (Firefox / Chromium / ChatGPT Web via ProseMirror)**: Partial/Mixed support. While Chromium-based apps expose robust UIA text patterns, Firefox and some Electron apps may expose accessible text through `LegacyIAccessiblePattern` or `ValuePattern` rather than full line/character `TextPatternRange` coordinates.
   - **Fallback Strategy**: If `TextPattern` bounding rectangles are unavailable or return empty for a given control (e.g., custom web editors or plain `ValuePattern` inputs), the floating popup can fall back to positioning relative to the target window rectangle (`NativeWindowHandle` bounding box) or near the caret/cursor location.
 
-### B. Direct Text Modification Without Focus (`ValuePattern` vs `TextPattern`)
+### B. Localized Text Modification While Preserving Target Focus (`ValuePattern` vs `TextPattern`)
 - **`ValuePattern`**: Can set `.SetValue(new_text)` on many editable controls without requiring focus. However, `SetValue` replaces the entire text content. For targeted corrections (e.g., replacing `was` with `were` inside a 500-word paragraph), replacing the entire text can disrupt the user's cursor position and selection.
 - **`TextPatternRange` / Selection Modification**: UIA text ranges support `.Select()` and `.ReplaceText(replacement_text)`. However, `ReplaceText` often requires the control to have focus or support selection manipulation.
-- **Investigation Conclusion**: For robust, universal support across diverse apps (Telegram, browsers, Notepad), the primary modification strategy will use `ValuePattern` (for full text replacement when targeting short inputs) or localized range replacement where supported, accompanied by careful caret preservation. If a control fundamentally does not support background modification without focus, G-Coach will document the limitation and avoid unsafe mutations.
+- **Current implementation**: G-Coach deliberately avoids `ValuePattern.SetValue` and `LegacyIAccessible.SetValue`, because those replace the entire value and can disturb unrelated text or the caret. It uses a verified localized `TextPattern` range and keyboard input only while the original target remains focused. Controls that cannot provide the required identity, readable range, exact selection, or post-write verification fail closed; there is no full-document write fallback.
 
 ---
 
 ## 4. Target Reference Strategy (`CorrectionTarget`)
 
-To prevent the dangerous scenario where focus changes and a finding targets the wrong control, G-Coach will encapsulate target provenance into a durable `CorrectionTarget` object associated with every `Finding`.
+To prevent the dangerous scenario where focus changes and a finding targets the wrong control, G-Coach encapsulates target provenance into a `CorrectionTarget` associated with every popup. The target contains only plain Python identity and text values; it never stores an apartment-bound UIA object.
 
 ```python
 @dataclass
@@ -53,18 +53,18 @@ class CorrectionTarget:
     process_id: int
     hwnd: int
     automation_id: str
+    control_name: str
     control_type: str
     app_name: str
     initial_text_hash: str
-    uia_element_ref: Optional[Any] = field(default=None, repr=False)
 ```
 
 ### Validation Workflow on "Accept":
-1. User clicks Accept on the floating popup.
-2. G-Coach inspects the currently focused control via `WindowsUIAccessibilityTextSource`.
-3. G-Coach verifies that the current control's `control_id`, `process_id`, and `hwnd` match the `CorrectionTarget`.
-4. G-Coach verifies that the target control's current text still contains the expected `original` text at the expected offset/context.
-5. If validation succeeds, the correction is applied directly. If validation fails (e.g., user typed elsewhere or switched apps), the correction is safely discarded as stale.
+1. User clicks Accept on the non-activating floating popup.
+2. G-Coach queues the operation onto the `LiveTextMonitor` UIA-owning thread and reacquires the currently focused control there.
+3. G-Coach verifies the process, native handle (when available), AutomationId or control name, and control type against the `CorrectionTarget`.
+4. G-Coach verifies the complete live document and exact finding range; it then confirms UIA selected the exact range and rechecks focus and text immediately before input.
+5. G-Coach applies the localized replacement and verifies the complete resulting document. If any check fails (for example, focus changed, the editor does not expose the required patterns, or the document changed), the correction is refused.
 
 ---
 
@@ -98,9 +98,9 @@ FloatingCorrectionPopup (Positioned via Bounding Rectangles, Non-activating)
         ↓
 User clicks Accept on Popup
         ↓
-Validate CorrectionTarget (Match control_id, hwnd, and text context)
+Reacquire and validate CorrectionTarget on the UIA owner thread
         ↓
-Apply Direct Modification (ValuePattern / TextPattern)
+Select exact TextPattern range and apply verified keyboard replacement
         ↓
 Re-poll Text Snapshot & Re-analyze
         ↓
@@ -120,5 +120,27 @@ Dismiss Popup
 1. **Step 1**: Implement `CorrectionTarget` data structure and bind it during resolution.
 2. **Step 2**: Create the non-activating floating popup widget (`FloatingCorrectionPopup`) with `Qt.Tool`, `Qt.WindowStaysOnTopHint`, and `WS_EX_NOACTIVATE`.
 3. **Step 3**: Implement bounding-rectangle coordinate resolution using UIA `TextPatternRange`.
-4. **Step 4**: Implement safe background text modification (`ValuePattern` / UIA text modification).
+4. **Step 4**: Implement safe localized modification while the original target retains focus, with exact selection and post-write verification.
 5. **Step 5**: Wire up Accept/Dismiss actions with rigorous target validation.
+
+## 9. Popup Positioning Implementation Status
+
+The desktop window now attempts to position each popup beside the exact finding:
+
+1. It reacquires the currently focused control on the monitor's UIA-owning thread and verifies that the complete text snapshot and finding range are still unchanged.
+2. It builds the exact range using strict offset validation, then reads `GetBoundingRectangles()` without selecting or modifying text.
+3. It anchors to the final visible rectangle for multi-line findings and selects the screen containing that rectangle.
+4. If range geometry is unavailable, it falls back to the target control's window rectangle, then to the G-Coach window.
+
+The positioning and fallback logic is covered by unit tests. Real-editor validation across Notepad, Word, browsers, and Electron applications remains a manual Windows verification task; unsupported controls are expected to use the fallback path.
+
+## 10. UI Automation COM Thread Ownership
+
+The installed `uiautomation` package documents that a `Control` or `Pattern` created on one thread must not be used from another thread. The application therefore keeps all UI Automation operations on the `LiveTextMonitor` thread:
+
+1. The monitor thread initializes UI Automation when it starts and releases its COM client when it exits.
+2. Focus capture, exact-range geometry lookup, correction selection/input, and post-write verification execute on that same thread.
+3. `TextSnapshot`, `MonitorState`, and `CorrectionTarget` carry only ordinary Python values and stable control identity. They never retain a UIA `Control`, `Pattern`, or range object.
+4. The Qt thread requests geometry and correction through `run_on_monitor_thread()` and receives only a rectangle, boolean, or monitor-state snapshot.
+
+This avoids using apartment-bound COM wrappers across the monitoring and Qt threads. The change is covered by unit tests for owner-thread dispatch, source initialization/shutdown, target identity revalidation, and the absence of UIA references in snapshots. Real-editor validation is still required on Windows.
