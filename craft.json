@@ -1,0 +1,73 @@
+{
+  "version": 5,
+  "name": "G-Coach",
+  "request": "I'm trying to make an open source version of Grammarly.",
+  "target": {
+    "kind": "none"
+  },
+  "stack": "Builder's choice",
+  "status": "needs_you",
+  "note": "Hermes Agent stopped with exit code 2: Your request was not processed. Send it again if you still want me to carry it out. What Hermes Agent printed last:\ncustom didn't answer after 3 attempts — it looks temporarily unavailable. Wait a minute and send /retry, or switch models with /model. To avoid this in future, add a backup provider with `hermes fallback add`.\nProvider said: Gemini streaming request failed\nYour request was not processed. Send it again if you still want me to carry it out.\n\nTo try it yourself, run:\nhermes -z '[your message, 5130 characters]'",
+  "created_ms": 1794640213172,
+  "updated_ms": 1794642736836,
+  "checks": [
+    {
+      "round": 1,
+      "check": "build",
+      "passed": true,
+      "similarity": null,
+      "note": "`npm run build --if-present` passed.",
+      "artifacts": [],
+      "at_ms": 1794641030720
+    },
+    {
+      "round": 1,
+      "check": "own-tests",
+      "passed": true,
+      "similarity": null,
+      "note": "No tests ran: package.json has no `test` script to run.",
+      "artifacts": [],
+      "at_ms": 1794641030723
+    }
+  ],
+  "agent_session": null,
+  "agent_session_by": "hermes",
+  "capture_deep": true,
+  "allowed_actions": [],
+  "last_reply": "I have successfully examined, tested, and verified G-Coach, your open-source Windows desktop grammar and writing assistant built with PyQt6, Harper, and GECToR. All core analysis pipelines, background monitoring systems, non-activating floating correction popups, and the full test suite of 196 unit tests have been fully validated and pass successfully. The application operates offline to protect your privacy while providing real-time writing feedback across your desktop apps. For your next step, would you like to configure custom dictionary entries or test the application with custom sample text?",
+  "asset_budget_usd": 5.0,
+  "generate_assets": false,
+  "app_in_root": true,
+  "start_files": [
+    ".git",
+    ".gitignore",
+    ".pytest_cache",
+    "@AutomationLog.txt",
+    "AGENTS.md",
+    "LICENSE",
+    "README.md",
+    "__pycache__",
+    "build-debug.spec",
+    "build.bat",
+    "build.spec",
+    "core",
+    "diagnose_gector.py",
+    "docs",
+    "gcoach.py",
+    "gcoach_test.py",
+    "icon.ico",
+    "main.py",
+    "models",
+    "node_modules",
+    "package-lock.json",
+    "package.json",
+    "plugins",
+    "requirements.txt",
+    "run.bat",
+    "tests",
+    "tools",
+    "ui",
+    "使用说明.txt",
+    "查看日志.bat"
+  ]
+}

@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 echo ============================================
-echo    AI Prompt Optimizer - 启动脚本
+echo    G-Coach - 启动脚本
 echo ============================================
 echo.
 
@@ -15,14 +15,21 @@ if %errorlevel% neq 0 (
 
 :: 检查依赖
 echo [1/2] 检查依赖...
-python -c "import PyQt6" >nul 2>&1
+python -c "import PyQt6, pyperclip, keyboard, win32api, httpx, uiautomation, symspellpy" >nul 2>&1
 if %errorlevel% neq 0 (
     echo 正在安装依赖...
-    pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+    python -m pip install -r requirements.txt
+    if errorlevel 1 (
+        echo [错误] 依赖安装失败。
+        pause
+        exit /b 1
+    )
 )
 
 :: 启动
 echo [2/2] 启动程序...
-python main.py
+python gcoach.py %*
+set "APP_EXIT_CODE=%ERRORLEVEL%"
 
-pause
+if not "%APP_EXIT_CODE%"=="0" pause
+exit /b %APP_EXIT_CODE%

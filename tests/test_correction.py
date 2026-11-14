@@ -52,6 +52,7 @@ class TestCorrectionController(unittest.TestCase):
         from core.correction.target import CorrectionTarget
         from core.correction.engine import BackgroundCorrectionEngine
         from core.monitoring import TextSnapshot
+        from unittest.mock import patch
 
         snapshot = TextSnapshot(
             text="The students was very happy.",
@@ -72,7 +73,7 @@ class TestCorrectionController(unittest.TestCase):
         wrong_snapshot = TextSnapshot(text="Other text", control_id="ctrl-wrong", process_id=1000)
         self.assertFalse(target.validate_current_snapshot(wrong_snapshot))
 
-        # 验证当 element 为 None 时，BackgroundCorrectionEngine 不能返回成功
+        # 验证原始控件不再聚焦时，BackgroundCorrectionEngine 不能返回成功
         finding = Finding(
             source="harper",
             category="grammar",
@@ -82,7 +83,9 @@ class TestCorrectionController(unittest.TestCase):
             start=13,
             end=16,
         )
-        success = BackgroundCorrectionEngine.apply_correction_to_target(target, finding)
+        with patch("platform.system", return_value="Windows"), \
+             patch("uiautomation.GetFocusedControl", return_value=None):
+            success = BackgroundCorrectionEngine.apply_correction_to_target(target, finding)
         self.assertFalse(success)
 
         # 测试重复文本中的精确替换
@@ -199,20 +202,27 @@ class TestCorrectionController(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.new_text, "Hello")
 
-    def test_background_correction_engine_element_ref_capture_and_missing_pattern_handling(self):
-        """回归测试：验证 BackgroundCorrectionEngine 在当 element_ref 为 True 但无写模式或抛出异常时不会产生虚假成功 (False Success)"""
+    def test_background_correction_engine_missing_pattern_handling(self):
+        """重新获取目标控件后，缺失或异常的 UIA Pattern 不得产生虚假成功。"""
         from core.correction.target import CorrectionTarget
         from core.correction.engine import BackgroundCorrectionEngine
-        from unittest.mock import MagicMock
+        from unittest.mock import MagicMock, patch
 
         mock_element = MagicMock()
         mock_element.GetPattern.side_effect = Exception("UIA Pattern error")
 
         target = CorrectionTarget(
             control_id="ctrl-mock-element",
+            process_id=1000,
+            hwnd=12345,
+            automation_id="auto-1",
+            control_type="EditControl",
             original_text="The students was happy.",
-            element_ref=mock_element,
         )
+        mock_element.ProcessId = 1000
+        mock_element.NativeWindowHandle = 12345
+        mock_element.AutomationId = "auto-1"
+        mock_element.ControlTypeName = "EditControl"
         finding = Finding(
             source="harper",
             category="grammar",
@@ -223,7 +233,9 @@ class TestCorrectionController(unittest.TestCase):
             end=16,
         )
 
-        success = BackgroundCorrectionEngine.apply_correction_to_target(target, finding)
+        with patch("platform.system", return_value="Windows"), \
+             patch("uiautomation.GetFocusedControl", return_value=mock_element):
+            success = BackgroundCorrectionEngine.apply_correction_to_target(target, finding)
         self.assertFalse(success)
 
     def test_ignore_and_reject_status(self):
@@ -276,296 +288,6 @@ class TestCorrectionController(unittest.TestCase):
         result = self.controller.apply_acceptance(text, f1, all_findings=all_findings)
         self.assertFalse(result.success)
         self.assertIn("has conflicting alternative suggestions", result.error_message)
-
-    def test_scintilla_target_detection_and_fallback_behavior(self):
-        """测试 Phase 8G: Notepad++/Scintilla 目标检测、非 Scintilla 目标隔离、范围精确计算与降级失败处理"""
-        from core.correction.target import CorrectionTarget
-        from core.correction.engine import BackgroundCorrectionEngine
-        from unittest.mock import MagicMock, patch
-
-        # 1. Scintilla target detection (when HWND resolves to Scintilla)
-        target_npp = CorrectionTarget(
-            control_id="npp-1",
-            app_name="notepad++.exe",
-            hwnd=123,
-            original_text="Hello world"
-        )
-        with patch("platform.system", return_value="Windows"), \
-             patch.object(BackgroundCorrectionEngine, "_resolve_scintilla_hwnd", return_value=123):
-            self.assertTrue(BackgroundCorrectionEngine._is_scintilla_target(target_npp, None))
-
-        # 2. Non-Scintilla targets do not use the fallback
-        target_tg = CorrectionTarget(
-            control_id="tg-1",
-            app_name="Telegram.exe",
-            hwnd=54321,
-            original_text="Hello world"
-        )
-        with patch("platform.system", return_value="Windows"), \
-             patch.object(BackgroundCorrectionEngine, "_resolve_scintilla_hwnd", return_value=None):
-            self.assertFalse(BackgroundCorrectionEngine._is_scintilla_target(target_tg, None))
-
-        # 3. Exact replacement range & stale text rejection in Scintilla fallback
-        finding = Finding(
-            source="harper",
-            category="grammar",
-            message="Fix",
-            original="world",
-            replacement="universe",
-            start=6,
-            end=11,
-        )
-        # Stale text: text at [6:11] is not "world"
-        stale_text = "Hello earth"
-        with patch("platform.system", return_value="Windows"), \
-             patch.object(BackgroundCorrectionEngine, "_resolve_scintilla_hwnd", return_value=123):
-            success_stale = BackgroundCorrectionEngine._apply_scintilla_fallback(target_npp, finding, stale_text)
-        self.assertFalse(success_stale)
-
-        # 4. Fallback failure returns False rather than success when platform is non-Windows or HWND invalid
-        target_no_hwnd = CorrectionTarget(
-            control_id="npp-2",
-            app_name="notepad++.exe",
-            hwnd=0,
-            original_text="Hello world"
-        )
-        success_nohwnd = BackgroundCorrectionEngine._apply_scintilla_fallback(target_no_hwnd, finding, "Hello world")
-        self.assertFalse(success_nohwnd)
-
-        # 5. Existing UIA behavior remains unchanged for non-Scintilla / standard targets
-        mock_element = MagicMock()
-        mock_element.GetPattern.return_value = None
-        target_std = CorrectionTarget(
-            control_id="std-1",
-            app_name="App.exe",
-            element_ref=mock_element,
-            original_text="Hello world"
-        )
-        res_std = BackgroundCorrectionEngine.apply_correction_to_target(target_std, finding)
-        self.assertFalse(res_std)
-
-    def test_phase_8g1_scintilla_hwnd_resolution_and_verification(self):
-        """测试 Phase 8G.1:
-        A. Scintilla HWND resolves to itself when class is Scintilla.
-        B. Notepad++ container HWND resolves to descendant Scintilla HWND.
-        C. Non-Notepad++ target never invokes Scintilla fallback.
-        D. Notepad++ target with no Scintilla descendant returns None / false.
-        E. SCI_SETSEL/SCI_REPLACESEL uses resolved Scintilla HWND.
-        F. Stale / mismatched live text is rejected.
-        G. Successful replacement accepted only after post-write verification.
-        H. SendMessage call that does not actually modify text results in success=False.
-        I. Repeated text is corrected at exact intended range only.
-        J. Existing generic UIA correction behavior remains unchanged.
-        """
-        from core.correction.target import CorrectionTarget
-        from core.correction.engine import BackgroundCorrectionEngine
-        from unittest.mock import patch, MagicMock
-        import ctypes
-
-        # Ensure ctypes has a mock windll attribute if running on Linux for testing purposes
-        original_windll = getattr(ctypes, "windll", None)
-        if not hasattr(ctypes, "windll"):
-            ctypes.windll = MagicMock()
-
-        try:
-            # A & B & D: HWND resolution tests
-            with patch("platform.system", return_value="Windows"):
-                 
-                # Mock GetClassNameW for Scintilla vs container pane
-                def mock_get_classname(hwnd, buf, max_count):
-                    if hwnd == 100:
-                        buf.value = "Scintilla"
-                    elif hwnd == 200:
-                        buf.value = "AfxWnd40u" # Container pane
-                    elif hwnd == 300:
-                        buf.value = "Static"    # Non-Scintilla control
-                    else:
-                        buf.value = "Unknown"
-                    return len(buf.value)
-                    
-                ctypes.windll.user32.GetClassNameW.side_effect = mock_get_classname
-                
-                def mock_enum_child_windows(hwnd, callback, lparam):
-                    if hwnd == 200:
-                        try:
-                            callback(100, lparam)
-                        except Exception:
-                            pass
-                    return True
-
-                ctypes.windll.user32.EnumChildWindows.side_effect = mock_enum_child_windows
-
-                def mock_find_window_ex(parent, child_after, class_name, window_name):
-                    if parent == 200 and class_name == "Scintilla":
-                        return 100
-                    return 0
-                    
-                ctypes.windll.user32.FindWindowExW.side_effect = mock_find_window_ex
-
-                # A. Scintilla HWND resolves to itself
-                resolved_a = BackgroundCorrectionEngine._resolve_scintilla_hwnd(100)
-                self.assertEqual(resolved_a, 100)
-
-                # B. Notepad++ container HWND resolves to descendant Scintilla HWND (100)
-                resolved_b = BackgroundCorrectionEngine._resolve_scintilla_hwnd(200)
-                self.assertEqual(resolved_b, 100)
-
-                # D. Container with no Scintilla descendant returns None
-                resolved_d = BackgroundCorrectionEngine._resolve_scintilla_hwnd(300)
-                self.assertIsNone(resolved_d)
-
-                # C. Non-Notepad++ target isolation (or target with no Scintilla HWND)
-                target_non_sci = CorrectionTarget(hwnd=300, app_name="Notepad.exe", original_text="test")
-                self.assertFalse(BackgroundCorrectionEngine._is_scintilla_target(target_non_sci, None))
-
-            # E, F, G, H, I: Scintilla fallback execution with pre-check and post-write verification
-            with patch("platform.system", return_value="Windows"):
-                 
-                ctypes.windll.user32.GetClassNameW.side_effect = lambda h, b, m: setattr(b, 'value', 'Scintilla') or 9
-                
-                current_doc_text = ["Hello world"]
-                
-                def mock_send_message_w(hwnd, msg, wparam, lparam):
-                    if msg == 2183: # SCI_GETTEXTLENGTH
-                        return len(current_doc_text[0])
-                    elif msg == 2182: # SCI_GETTEXT
-                        if lparam and hasattr(lparam, 'value'):
-                            try:
-                                lparam.value = current_doc_text[0]
-                            except Exception:
-                                pass
-                        return len(current_doc_text[0])
-                    elif msg == 2160: # SCI_SETSEL
-                        return 0
-                    elif msg == 2170: # SCI_REPLACESEL
-                        current_doc_text[0] = current_doc_text[0][:6] + "universe" + current_doc_text[0][11:]
-                        return 1
-                    return 0
-
-                ctypes.windll.user32.SendMessageW.side_effect = mock_send_message_w
-
-                target_npp = CorrectionTarget(hwnd=100, app_name="notepad++.exe", original_text="Hello world")
-                finding = Finding(
-                    source="harper",
-                    category="grammar",
-                    message="Fix",
-                    original="world",
-                    replacement="universe",
-                    start=6,
-                    end=11,
-                )
-
-                # G. Successful replacement accepted after post-write verification
-                success = BackgroundCorrectionEngine._apply_scintilla_fallback(target_npp, finding, "Hello world")
-                self.assertTrue(success)
-                self.assertEqual(current_doc_text[0], "Hello universe")
-
-                # F. Stale / mismatched live text is rejected
-                current_doc_text[0] = "Hello earth"
-                success_stale = BackgroundCorrectionEngine._apply_scintilla_fallback(target_npp, finding, "Hello world")
-                self.assertFalse(success_stale)
-
-                # H. A SendMessage call that does not actually modify the text results in success=False (Post-write verification failure)
-                current_doc_text[0] = "Hello world"
-                def mock_send_message_w_no_change(hwnd, msg, wparam, lparam):
-                    if msg == 2183:
-                        return len(current_doc_text[0])
-                    elif msg == 2182:
-                        if lparam:
-                            lparam.value = current_doc_text[0]
-                        return len(current_doc_text[0])
-                    elif msg == 2160:
-                        return 0
-                    elif msg == 2170:
-                        return 0
-                    return 0
-
-                ctypes.windll.user32.SendMessageW.side_effect = mock_send_message_w_no_change
-                success_no_change = BackgroundCorrectionEngine._apply_scintilla_fallback(target_npp, finding, "Hello world")
-                self.assertFalse(success_no_change)
-        finally:
-            if original_windll is None and hasattr(ctypes, "windll"):
-                delattr(ctypes, "windll")
-
-    def test_phase_8g2_recursive_scintilla_resolution_and_false_success_prevention(self):
-        """测试 Phase 8G.2:
-        A. HWND whose class is directly Scintilla resolves to itself.
-        B. Container HWND with Scintilla as an immediate child resolves correctly.
-        C. Container HWND with Scintilla nested two or more levels deep resolves correctly.
-        D. Container with no Scintilla descendant returns None.
-        E. Non-Notepad++ target is never classified as Scintilla.
-        F. Notepad++ container with resolvable Scintilla descendant is classified correctly.
-        G. Notepad++ target with no Scintilla descendant does NOT report successful Scintilla correction.
-        H. Existing stale-text rejection remains intact.
-        I. Existing post-write verification remains required.
-        J. Existing Telegram/Firefox/UIA correction behavior is not changed.
-        """
-        from core.correction.target import CorrectionTarget
-        from core.correction.engine import BackgroundCorrectionEngine
-        from unittest.mock import patch, MagicMock
-        import ctypes
-
-        original_windll = getattr(ctypes, "windll", None)
-        if not hasattr(ctypes, "windll"):
-            ctypes.windll = MagicMock()
-
-        try:
-            with patch("platform.system", return_value="Windows"):
-                # Setup class name mapping for deep nesting:
-                # HWND 10: Root container (AfxWnd40u) -> child 20 (Pane) -> grandchild 30 (Scintilla)
-                # HWND 40: Container with no Scintilla descendant (Static)
-                def mock_get_classname(hwnd, buf, max_count):
-                    mapping = {
-                        10: "AfxWnd40u",
-                        20: "AfxWnd40u",
-                        30: "Scintilla",
-                        40: "Static"
-                    }
-                    cls = mapping.get(int(hwnd), "Unknown")
-                    buf.value = cls
-                    return len(cls)
-
-                ctypes.windll.user32.GetClassNameW.side_effect = mock_get_classname
-
-                # Setup EnumChildWindows hierarchy
-                def mock_enum_child_windows(hwnd, callback, lparam):
-                    if hwnd == 10:
-                        callback(20, lparam)
-                    elif hwnd == 20:
-                        callback(30, lparam)
-                    return True
-
-                ctypes.windll.user32.EnumChildWindows.side_effect = mock_enum_child_windows
-                ctypes.windll.user32.FindWindowExW.return_value = 0 # force deep traversal
-
-                # A. Direct Scintilla HWND resolves to itself
-                self.assertEqual(BackgroundCorrectionEngine._resolve_scintilla_hwnd(30), 30)
-
-                # B & C. Nested container HWND (10) resolves to descendant Scintilla HWND (30) at depth 2
-                self.assertEqual(BackgroundCorrectionEngine._resolve_scintilla_hwnd(10), 30)
-
-                # D. Container with no Scintilla descendant returns None
-                self.assertIsNone(BackgroundCorrectionEngine._resolve_scintilla_hwnd(40))
-
-                # E. Non-Notepad++ target is never classified as Scintilla
-                target_non_npp = CorrectionTarget(hwnd=10, app_name="Telegram.exe", original_text="test")
-                self.assertFalse(BackgroundCorrectionEngine._is_scintilla_target(target_non_npp, None))
-
-                # F. Notepad++ container with resolvable Scintilla descendant is classified correctly
-                target_npp_container = CorrectionTarget(hwnd=10, app_name="notepad++.exe", original_text="test")
-                self.assertTrue(BackgroundCorrectionEngine._is_scintilla_target(target_npp_container, None))
-
-                # G. Notepad++ target with no Scintilla descendant is NOT classified as Scintilla
-                target_npp_bad = CorrectionTarget(hwnd=40, app_name="notepad++.exe", original_text="test")
-                self.assertFalse(BackgroundCorrectionEngine._is_scintilla_target(target_npp_bad, None))
-
-                # J. Existing Telegram/Firefox/UIA behavior is not disrupted (standard targets without Scintilla resolve to False)
-                target_tg = CorrectionTarget(hwnd=40, app_name="Telegram.exe", original_text="test")
-                self.assertFalse(BackgroundCorrectionEngine._is_scintilla_target(target_tg, None))
-        finally:
-            if original_windll is None and hasattr(ctypes, "windll"):
-                delattr(ctypes, "windll")
-
 
 if __name__ == "__main__":
     unittest.main()

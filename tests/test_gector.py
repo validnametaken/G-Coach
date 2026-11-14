@@ -57,6 +57,25 @@ class TestGectorAnalysisEngine(unittest.TestCase):
         self.assertEqual(text[f.start:f.end], f.original)
         self.assertTrue(0.0 <= f.confidence <= 1.0)
 
+    def test_verb_transform_threshold_uses_family_probability(self):
+        """Competing verb-form labels contribute to the transform action confidence."""
+        engine = GectorAnalysisEngine()
+        findings = engine.analyze("She go to school.")
+        finding = next(
+            (f for f in findings if f.original == "go" and f.replacement == "goes"),
+            None
+        )
+        if not finding or "lab_threshold_probability" not in finding.metadata:
+            self.skipTest("Real onnx model not loaded (simulation fallback)")
+
+        raw_label_probability = finding.metadata["lab_probability"]
+        threshold_probability = finding.metadata["lab_threshold_probability"]
+        self.assertGreaterEqual(threshold_probability, engine.lab_threshold)
+        self.assertGreaterEqual(threshold_probability, raw_label_probability)
+        # Finding confidence remains based on the selected label, not the
+        # broader action-family probability used only for thresholding.
+        self.assertLessEqual(finding.confidence, raw_label_probability)
+
     def test_test_case_i_has_a_apple(self):
         text = "I has a apple."
         findings = self.engine.analyze(text)

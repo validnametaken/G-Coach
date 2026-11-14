@@ -1,422 +1,571 @@
-"""
-G-Coach Background Text Correction Engine - Phase 8E
-实现通过 Windows UI Automation 的 ValuePattern / TextPattern 在无焦点状态下
-直接安全地修改目标控件文本。
-"""
+"""Safe, targeted correction of the original UI Automation text control."""
 
+from __future__ import annotations
+
+import hashlib
 import logging
+import math
 import platform
-from typing import Optional, Any
+import time
+from dataclasses import dataclass
+from typing import Any, Optional
+
 from core.analysis import Finding
 from core.correction.target import CorrectionTarget
 
 logger = logging.getLogger(__name__)
 
+# CEF-backed editors can drop or delay very fast synthetic Unicode input. Keep
+# the per-character delay small enough to feel instantaneous, but give the
+# editor's input loop time to consume each character before verification.
+_KEYSTROKE_DELAY_SECONDS = 0.01
+_POST_WRITE_VERIFY_TIMEOUT_SECONDS = 1.5
+_POST_WRITE_VERIFY_INTERVAL_SECONDS = 0.025
+_POST_WRITE_VERIFY_STABLE_READS = 2
+
+
+@dataclass(frozen=True)
+class CorrectionAttempt:
+    """Outcome of one exact-range UI Automation correction."""
+
+    success: bool
+    reason: str = ""
+    resulting_text: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class BatchCorrectionResult:
+    """Outcome of a safe, non-overlapping batch correction."""
+
+    success: bool
+    applied_count: int = 0
+    skipped_count: int = 0
+    reason: str = ""
+    resulting_text: Optional[str] = None
+
 
 class BackgroundCorrectionEngine:
-    """后台修正引擎（Background Correction Engine）
+    """Apply a finding only when its original target and full text are unchanged.
 
-    负责在无需将焦点抢占到 G-Coach 主窗口的情况下，
-    使用 UI Automation 原生模式（ValuePattern.SetValue）将纠正直接应用到原目标控件。
+    UIA's ValuePattern and LegacyIAccessible SetValue methods replace an entire
+    value. They are deliberately not used here: corrections must select and
+    replace only the finding's exact TextPattern range.
     """
 
     @staticmethod
     def apply_correction_to_target(target: CorrectionTarget, finding: Finding) -> bool:
-        """在无焦点状态下，直接将 finding 的纠正应用到 target 原始控件。
-
-        步骤：
-        1. 验证目标控件引用或通过 UIA 重新获取。
-        2. 获取控件当前完整文本。
-        3. 验证 finding 的 [start:end] 文本与 finding.original 严格匹配。
-        4. 构造新完整文本。
-        5. 通过 ValuePattern.SetValue() 写入控件。
-        """
-        if not target:
-            logger.error("Cannot apply correction: CorrectionTarget is None.")
-            return False
-
-        # 0. 若为 Notepad++ 目标，优先通过 Phase 8G.6 原生插件命名管道桥接进行安全修正
-        from core.correction.npp_adapter import NppCorrectionAdapter
-        if NppCorrectionAdapter.is_notepad_target(target):
-            logger.info("Phase 8G.6: Notepad++ target detected; routing correction through NppCorrectionAdapter.")
-            return NppCorrectionAdapter.apply_bridge_correction(target, finding)
-
-        # 1. 获取或绑定 UIA 元素
-        element = target.element_ref
-        if not element and platform.system() == "Windows":
-            element = BackgroundCorrectionEngine._reacquire_element(target)
-
-        # 注意：在非 Windows 环境（如 Linux CI）或测试 Mock 模式下，element 可能为 None，
-        # 此时应允许降级使用 target.original_text 进行纯文本验证与替换构造，而不是直接失败返回 False。
-
-        # 2. 读取当前文本
-        current_text = ""
-        try:
-            if element:
-                import uiautomation as auto
-                # 尝试从 ValuePattern 读取
-                val_pattern = element.GetPattern(auto.PatternId.ValuePattern)
-                if val_pattern:
-                    current_text = val_pattern.Value or ""
-                if not current_text:
-                    # 尝试 TextPattern
-                    for pid in (auto.PatternId.TextPattern, auto.PatternId.TextPattern2):
-                        p = element.GetPattern(pid)
-                        if p and p.DocumentRange:
-                            current_text = p.DocumentRange.GetText(65535) or ""
-                            if current_text:
-                                break
-                if not current_text:
-                    acc = element.GetPattern(auto.PatternId.LegacyIAccessiblePattern)
-                    if acc:
-                        current_text = acc.Value or acc.Name or ""
-            else:
-                # 单元测试 Mock 模式下降级使用 target.original_text
-                current_text = target.original_text
-        except Exception as e:
-            logger.error(f"Error reading current text from target element: {e}")
-            current_text = target.original_text
-
-        # 3. 严格范围与文本校验 (Stale Finding & Range Protection)
-        start = finding.start
-        end = finding.end
-        original = finding.original
-
-        if start < 0 or end < start or end > len(current_text):
-            logger.warning(f"Stale finding rejection: offset range [{start}, {end}] out of bounds for text of length {len(current_text)}.")
-            return False
-
-        if original != "" and current_text[start:end] != original:
-            logger.warning(f"Stale finding rejection: source text at [{start}:{end}] is '{current_text[start:end]}', expected '{original}'. Text changed.")
-            return False
-
-        # 4. 构造新完整文本
-        if original == "" and start == end:
-            new_text = current_text[:start] + finding.replacement + current_text[start:]
-        else:
-            new_text = current_text[:start] + finding.replacement + current_text[end:]
-
-        # 5. 应用写入
-        success = False
-        try:
-            if element:
-                import uiautomation as auto
-
-                applied = False
-                
-                # 尝试 1: ValuePattern
-                logger.info("Diagnostic: Attempting UIA write pattern: ValuePattern")
-                try:
-                    val_pattern = element.GetPattern(auto.PatternId.ValuePattern)
-                    pattern_exists = (val_pattern is not None)
-                    logger.info(f"Diagnostic: ValuePattern exists: {pattern_exists} (ReadOnly: {getattr(val_pattern, 'IsReadOnly', 'N/A') if pattern_exists else 'N/A'})")
-                    if pattern_exists and not getattr(val_pattern, "IsReadOnly", False):
-                        logger.info("Diagnostic: Calling ValuePattern.SetValue()")
-                        try:
-                            val_pattern.SetValue(new_text)
-                            applied = True
-                            logger.info(f"Successfully applied background correction via ValuePattern to control {target.control_id}")
-                        except Exception as e:
-                            logger.info(f"Diagnostic: ValuePattern.SetValue raised exception: {e}")
-                            raise
-                except Exception as e:
-                    logger.debug(f"ValuePattern.SetValue failed: {e}")
-
-                # 尝试 2: TextPattern range replacement
-                if not applied:
-                    for pid in (auto.PatternId.TextPattern, auto.PatternId.TextPattern2):
-                        pattern_name = "TextPattern" if pid == auto.PatternId.TextPattern else "TextPattern2"
-                        logger.info(f"Diagnostic: Attempting UIA write pattern: {pattern_name}")
-                        try:
-                            tp = element.GetPattern(pid)
-                            pattern_exists = (tp is not None and getattr(tp, "DocumentRange", None) is not None)
-                            logger.info(f"Diagnostic: {pattern_name} exists: {pattern_exists}")
-                            if pattern_exists:
-                                logger.info(f"Diagnostic: Calling {pattern_name} range select/replace")
-                                try:
-                                    rng = tp.DocumentRange
-                                    rng.Select()
-                                    active_selection = tp.GetSelection()
-                                    if active_selection and len(active_selection) > 0:
-                                        active_selection[0].ReplaceText(finding.replacement)
-                                        applied = True
-                                        logger.info(f"Successfully applied correction via {pattern_name} ReplaceText.")
-                                        break
-                                except Exception as e:
-                                    logger.info(f"Diagnostic: {pattern_name} replacement raised exception: {e}")
-                                    raise
-                        except Exception as e:
-                            logger.debug(f"TextPattern replacement failed: {e}")
-
-                # 尝试 3: 若 ValuePattern 和 TextPattern 均不可用但控件有焦点或支持 LegacyIAccessiblePattern
-                if not applied:
-                    logger.info("Diagnostic: Attempting UIA write pattern: LegacyIAccessiblePattern")
-                    try:
-                        acc = element.GetPattern(auto.PatternId.LegacyIAccessiblePattern)
-                        pattern_exists = (acc is not None and hasattr(acc, "SetValue"))
-                        logger.info(f"Diagnostic: LegacyIAccessiblePattern exists and has SetValue: {pattern_exists}")
-                        if pattern_exists:
-                            logger.info("Diagnostic: Calling LegacyIAccessiblePattern.SetValue()")
-                            try:
-                                acc.SetValue(new_text)
-                                applied = True
-                                logger.info("Successfully applied correction via LegacyIAccessiblePattern.")
-                            except Exception as e:
-                                logger.info(f"Diagnostic: LegacyIAccessiblePattern.SetValue raised exception: {e}")
-                                raise
-                    except Exception as e:
-                        logger.debug(f"LegacyIAccessiblePattern SetValue failed: {e}")
-
-                success = applied
-                
-                # 5. Read target text immediately after the call if possible
-                try:
-                    post_text = ""
-                    val_p = element.GetPattern(auto.PatternId.ValuePattern)
-                    if val_p:
-                        post_text = val_p.Value or ""
-                    if not post_text:
-                        for pid in (auto.PatternId.TextPattern, auto.PatternId.TextPattern2):
-                            p = element.GetPattern(pid)
-                            if p and p.DocumentRange:
-                                post_text = p.DocumentRange.GetText(65535) or ""
-                                if post_text:
-                                    break
-                    if not post_text:
-                        acc = element.GetPattern(auto.PatternId.LegacyIAccessiblePattern)
-                        if acc:
-                            post_text = acc.Value or acc.Name or ""
-                    logger.info(f"Diagnostic: Target text immediately after write call: {repr(post_text)}")
-                except Exception as ex:
-                    logger.info(f"Diagnostic: Failed to read target text immediately after call: {ex}")
-
-                if not success:
-                    logger.warning(f"No suitable writable pattern (ValuePattern/TextPattern/LegacyIAccessible) found for target control {target.control_id}.")
-
-                # 尝试 4: Scintilla / Notepad++ Win32 HWND fallback (Phase 8G)
-                if not success and BackgroundCorrectionEngine._is_scintilla_target(target, element):
-                    logger.info("Diagnostic: UIA write-back failed or unsupported; initiating Scintilla fallback for Notepad++ target.")
-                    success = BackgroundCorrectionEngine._apply_scintilla_fallback(target, finding, current_text)
-            else:
-                logger.warning(f"Cannot apply correction: No UIA element reference available for target control {target.control_id}.")
-                success = False
-        except Exception as e:
-            logger.error(f"Failed to set value on target control via UIA: {e}", exc_info=True)
-            success = False
-
-        return success
+        """Compatibility wrapper returning only whether the correction succeeded."""
+        return BackgroundCorrectionEngine.apply_correction_to_target_detailed(
+            target, finding
+        ).success
 
     @staticmethod
-    def _reacquire_element(target: CorrectionTarget) -> Optional[Any]:
-        """根据 process_id 和 automation_id 尝试重新定位 UIA 元素"""
+    def apply_correction_to_target_detailed(
+        target: CorrectionTarget, finding: Finding
+    ) -> CorrectionAttempt:
+        """Apply one correction and return a safe, user-displayable failure reason."""
+        if target is None or finding is None:
+            logger.warning("Correction refused: target or finding is missing.")
+            return CorrectionAttempt(False, "The correction target or suggestion is missing.")
+        if platform.system() != "Windows":
+            logger.warning("Correction refused: targeted UI Automation editing is Windows-only.")
+            return CorrectionAttempt(False, "Targeted editing is only supported on Windows.")
+        if finding.status in {"accepted", "ignored", "rejected"}:
+            logger.warning("Correction refused: finding status is %r.", finding.status)
+            return CorrectionAttempt(False, "This suggestion is no longer pending.")
+        if finding.original == finding.replacement:
+            logger.warning("Correction refused: replacement would not change the text.")
+            return CorrectionAttempt(False, "The suggested replacement would not change the text.")
+        if not isinstance(finding.start, int) or not isinstance(finding.end, int):
+            logger.warning("Correction refused: finding offsets are not integers.")
+            return CorrectionAttempt(False, "The suggestion has invalid text offsets.")
+        if finding.start < 0 or finding.end < finding.start:
+            logger.warning("Correction refused: invalid finding range [%s:%s].", finding.start, finding.end)
+            return CorrectionAttempt(False, "The suggestion has an invalid text range.")
+        if finding.end - finding.start != len(finding.original):
+            logger.warning("Correction refused: finding range length does not match its original text.")
+            return CorrectionAttempt(False, "The suggestion's text range does not match its source word.")
+
         try:
             import uiautomation as auto
-            root = auto.GetRootControl()
-            # 简单的进程树遍历查找
-            # 在实际运行中，如果保存了 element_ref 且控件未被销毁，通常直接可用
+
+            # UIA Control/Pattern wrappers are apartment-bound. Reacquire the
+            # focused element on the monitor thread instead of retaining the
+            # object captured during an earlier poll or passing it from Qt.
+            element = BackgroundCorrectionEngine._get_focused_target_element(target, auto)
+            if element is None:
+                logger.warning("Correction refused: the original target is no longer focused or cannot be identified.")
+                return CorrectionAttempt(False, "The original editor is no longer the focused target. Click back into the document and retry.")
+
+            pattern, document_range, current_text = BackgroundCorrectionEngine._read_text_pattern(
+                element, auto
+            )
+            if pattern is None or document_range is None or current_text is None:
+                logger.warning("Correction refused: the target exposes no readable TextPattern document range.")
+                return CorrectionAttempt(False, "The editor did not expose a readable text range to Windows UI Automation.")
+
+            # Compare the complete snapshot, not just the word being replaced.
+            # This also catches edits before the finding that would shift offsets.
+            if current_text != target.original_text:
+                logger.warning("Correction refused: target text changed since analysis (stale snapshot).")
+                return CorrectionAttempt(False, "The document changed after this suggestion was generated. G-Coach needs to recheck it before applying the correction.")
+
+            start, end = finding.start, finding.end
+            if end > len(current_text) or current_text[start:end] != finding.original:
+                logger.warning("Correction refused: finding text no longer matches its exact source range.")
+                return CorrectionAttempt(False, "The source word is no longer at the position identified by this suggestion.")
+
+            text_range = BackgroundCorrectionEngine._build_exact_range(
+                document_range, current_text, start, end, finding.original, auto
+            )
+            if text_range is None:
+                logger.warning("Correction refused: UIA could not resolve the exact finding range.")
+                return CorrectionAttempt(False, "Windows UI Automation could not map the suggestion to an exact text range in this editor.")
+
+            # Confirm that the UIA selection operation itself has not raced
+            # with another edit before sending any keyboard input.
+            if not text_range.Select(waitTime=0):
+                logger.warning("Correction refused: UIA could not select the exact finding range.")
+                return CorrectionAttempt(False, "The editor refused to select the exact text range.")
+
+            selection = pattern.GetSelection()
+            if not selection or len(selection) != 1:
+                logger.warning("Correction refused: the target did not report one exact selected range.")
+                return CorrectionAttempt(False, "The editor did not confirm the requested text selection.")
+            selected_range = selection[0]
+            if selected_range.GetText(-1) != finding.original:
+                logger.warning("Correction refused: the active selection no longer matches the finding.")
+                return CorrectionAttempt(False, "The selected text did not match the source word, so no change was made.")
+            try:
+                same_range = selected_range.Compare(text_range)
+            except Exception:
+                same_range = False
+            if not same_range:
+                logger.warning("Correction refused: UIA's active selection differs from the requested range.")
+                return CorrectionAttempt(False, "The editor selected a different range than requested, so no change was made.")
+
+            # Re-read the complete document after selecting and immediately
+            # before typing. Never fall back to the captured snapshot on error.
+            _, _, selected_text = BackgroundCorrectionEngine._read_text_pattern(element, auto)
+            if selected_text != current_text:
+                logger.warning("Correction refused: target text changed before replacement.")
+                return CorrectionAttempt(False, "The document changed immediately before the correction could be applied.")
+            if not BackgroundCorrectionEngine._is_original_target_focused(target, auto):
+                logger.warning("Correction refused: focus moved away from the original target before replacement.")
+                return CorrectionAttempt(False, "Focus moved away from the original editor before the correction could be applied.")
+
+            try:
+                import keyboard
+
+                if finding.replacement:
+                    keyboard.write(
+                        finding.replacement,
+                        delay=_KEYSTROKE_DELAY_SECONDS,
+                    )
+                else:
+                    keyboard.send("backspace")
+            except Exception as exc:
+                logger.error("Targeted text input failed: %s", exc, exc_info=True)
+                return CorrectionAttempt(False, "Windows could not type the replacement into the editor.")
+
+            expected_text = current_text[:start] + finding.replacement + current_text[end:]
+            post_text, verification_status = (
+                BackgroundCorrectionEngine._wait_for_expected_text(
+                    target, expected_text, auto
+                )
+            )
+            if verification_status != "verified":
+                if verification_status == "focus_lost":
+                    reason = (
+                        "Focus moved away from the original editor while the correction was being verified. "
+                        "Please inspect the document before retrying."
+                    )
+                elif verification_status == "unreadable":
+                    reason = (
+                        "The editor stopped exposing its text while the correction was being verified. "
+                        "Please inspect the document before retrying."
+                    )
+                elif post_text == current_text:
+                    reason = (
+                        "The editor did not reflect the replacement after typing. "
+                        "No text change was detected; inspect the document before retrying."
+                    )
+                else:
+                    reason = (
+                        "The editor changed while typing but did not confirm the complete expected text. "
+                        "Please inspect the document before retrying."
+                    )
+                logger.error(
+                    "Correction post-write verification failed (status=%s, expected_length=%s, observed_length=%s).",
+                    verification_status,
+                    len(expected_text),
+                    len(post_text) if post_text is not None else None,
+                )
+                return CorrectionAttempt(False, reason)
+
+            logger.info(
+                "Applied and verified targeted correction at [%s:%s] in control %s.",
+                start,
+                end,
+                target.control_id,
+            )
+            return CorrectionAttempt(True, resulting_text=post_text)
+        except Exception as exc:
+            logger.error("Targeted correction failed closed: %s", exc, exc_info=True)
+            return CorrectionAttempt(False, "An unexpected Windows text-editing error occurred. No unverified correction was reported as successful.")
+
+    @staticmethod
+    def _wait_for_expected_text(
+        target: CorrectionTarget,
+        expected_text: str,
+        auto: Any,
+    ) -> tuple[Optional[str], str]:
+        """Wait for the live editor text to catch up, without sending input again.
+
+        Some editors (notably canvas/CEF-backed controls) publish UIA text a
+        little later than they consume keyboard input. A short bounded wait
+        avoids reporting a successful-but-not-yet-published edit as a failure.
+        Two consecutive exact reads are required; any focus loss or unreadable
+        range remains a hard failure. The replacement is never retyped here.
+        """
+        deadline = time.monotonic() + _POST_WRITE_VERIFY_TIMEOUT_SECONDS
+        consecutive_matches = 0
+        last_text: Optional[str] = None
+        last_status = "unreadable"
+
+        while True:
+            focused_element = BackgroundCorrectionEngine._get_focused_target_element(
+                target, auto
+            )
+            if focused_element is None:
+                return last_text, "focus_lost"
+
+            pattern, document_range, observed_text = (
+                BackgroundCorrectionEngine._read_text_pattern(
+                    focused_element, auto
+                )
+            )
+            if pattern is None or document_range is None or observed_text is None:
+                last_status = "unreadable"
+                consecutive_matches = 0
+            else:
+                last_text = observed_text
+                last_status = "mismatch"
+                if observed_text == expected_text:
+                    consecutive_matches += 1
+                    if consecutive_matches >= _POST_WRITE_VERIFY_STABLE_READS:
+                        return observed_text, "verified"
+                else:
+                    consecutive_matches = 0
+
+            if time.monotonic() >= deadline:
+                return last_text, last_status
+            time.sleep(_POST_WRITE_VERIFY_INTERVAL_SECONDS)
+
+    @staticmethod
+    def apply_corrections_to_target(
+        target: CorrectionTarget, findings: list[Finding]
+    ) -> BatchCorrectionResult:
+        """Apply independent findings right-to-left, then allow one re-analysis.
+
+        Suggestions that conflict, overlap, are stale, or cannot be validated
+        against the original snapshot are skipped. Every actual edit still goes
+        through the same live UIA checks and post-write verification as a single
+        correction. Descending offsets keep all remaining source ranges stable.
+        """
+        if target is None or not findings:
+            return BatchCorrectionResult(False, skipped_count=len(findings or []), reason="There are no suggestions to apply.")
+
+        candidates = [
+            finding for finding in findings
+            if finding is not None
+            and finding.status not in {"accepted", "ignored", "rejected"}
+            and isinstance(finding.start, int)
+            and isinstance(finding.end, int)
+            and 0 <= finding.start <= finding.end <= len(target.original_text)
+            and target.original_text[finding.start:finding.end] == finding.original
+            and finding.original != finding.replacement
+            and not (finding.metadata or {}).get("has_conflict", False)
+        ]
+
+        # Never batch-apply overlapping findings, even when they came from
+        # different engines or one of them was otherwise individually valid.
+        blocked_ids: set[str] = set()
+        for first in candidates:
+            for second in findings:
+                if first.id == getattr(second, "id", None):
+                    continue
+                if (
+                    second is not None
+                    and isinstance(getattr(second, "start", None), int)
+                    and isinstance(getattr(second, "end", None), int)
+                    and 0 <= second.start <= second.end <= len(target.original_text)
+                    and BackgroundCorrectionEngine._finding_ranges_overlap(first, second)
+                ):
+                    blocked_ids.add(first.id)
+                    break
+
+        safe_findings = [f for f in candidates if f.id not in blocked_ids]
+        skipped_count = len(findings) - len(safe_findings)
+        if not safe_findings:
+            return BatchCorrectionResult(
+                False,
+                skipped_count=skipped_count,
+                reason="No independent, non-overlapping suggestions could be safely batch-applied.",
+                resulting_text=target.original_text,
+            )
+
+        applied_count = 0
+        for finding in sorted(safe_findings, key=lambda item: (item.start, item.end), reverse=True):
+            attempt = BackgroundCorrectionEngine.apply_correction_to_target_detailed(
+                target, finding
+            )
+            if not attempt.success or attempt.resulting_text is None:
+                return BatchCorrectionResult(
+                    applied_count > 0,
+                    applied_count=applied_count,
+                    skipped_count=skipped_count + len(safe_findings) - applied_count,
+                    reason=attempt.reason or "The batch stopped because a correction could not be verified.",
+                    resulting_text=target.original_text,
+                )
+
+            target.original_text = attempt.resulting_text
+            target.text_hash = hashlib.sha256(
+                attempt.resulting_text.encode("utf-8", errors="ignore")
+            ).hexdigest() if attempt.resulting_text else ""
+            finding.status = "accepted"
+            applied_count += 1
+
+        return BatchCorrectionResult(
+            True,
+            applied_count=applied_count,
+            skipped_count=skipped_count,
+            resulting_text=target.original_text,
+        )
+
+    @staticmethod
+    def _finding_ranges_overlap(first: Finding, second: Finding) -> bool:
+        """Return whether two half-open finding ranges overlap or share an insertion point."""
+        first_empty = first.start == first.end
+        second_empty = second.start == second.end
+        if first_empty and second_empty:
+            return first.start == second.start
+        if first_empty:
+            return second.start <= first.start <= second.end
+        if second_empty:
+            return first.start <= second.start <= first.end
+        return max(first.start, second.start) < min(first.end, second.end)
+
+    @staticmethod
+    def get_finding_screen_rect(
+        target: CorrectionTarget, finding: Finding
+    ) -> Optional[tuple[int, int, int, int]]:
+        """Return the UIA screen rectangle for a finding without changing selection.
+
+        The live document and exact Python-offset range are revalidated after
+        reacquiring the focused control on the UIA owner thread. Controls without
+        usable TextPattern geometry return ``None`` for a window-bounds fallback.
+        """
+        if target is None or finding is None or platform.system() != "Windows":
             return None
+        if not isinstance(finding.start, int) or not isinstance(finding.end, int):
+            return None
+        if finding.start < 0 or finding.end < finding.start:
+            return None
+        if finding.end - finding.start != len(finding.original):
+            return None
+
+        try:
+            import uiautomation as auto
+
+            element = BackgroundCorrectionEngine._get_focused_target_element(target, auto)
+            if element is None:
+                return None
+
+            _, document_range, current_text = BackgroundCorrectionEngine._read_text_pattern(
+                element, auto
+            )
+            if document_range is None or current_text is None:
+                return None
+            if current_text != target.original_text:
+                return None
+
+            start, end = finding.start, finding.end
+            if end > len(current_text) or current_text[start:end] != finding.original:
+                return None
+
+            text_range = BackgroundCorrectionEngine._build_exact_range(
+                document_range, current_text, start, end, finding.original, auto
+            )
+            if text_range is None:
+                return None
+
+            raw_rectangles = list(text_range.GetBoundingRectangles() or [])
+            if not raw_rectangles:
+                return None
+
+            # uiautomation wraps the COM float array as List[Rect]. Accept that
+            # native shape, plus a flat float array for compatible providers.
+            rectangles = []
+            if all(hasattr(rect, "left") for rect in raw_rectangles):
+                candidates = []
+                for rect in raw_rectangles:
+                    left = float(rect.left)
+                    top = float(rect.top)
+                    width = float(rect.width()) if callable(getattr(rect, "width", None)) else float(rect.right) - left
+                    height = float(rect.height()) if callable(getattr(rect, "height", None)) else float(rect.bottom) - top
+                    candidates.append((left, top, width, height))
+            else:
+                if len(raw_rectangles) % 4:
+                    return None
+                candidates = [
+                    tuple(float(value) for value in raw_rectangles[index:index + 4])
+                    for index in range(0, len(raw_rectangles), 4)
+                ]
+
+            # UIA returns one rectangle per visible visual line. Anchor to the
+            # final segment, nearest the end of the finding.
+            for left, top, width, height in candidates:
+                if all(math.isfinite(value) for value in (left, top, width, height)) and width > 0 and height > 0:
+                    rectangles.append((left, top, width, height))
+            if not rectangles:
+                return None
+
+            return tuple(round(value) for value in rectangles[-1])
+        except Exception as exc:
+            logger.debug("Unable to resolve UIA geometry for the current finding: %s", exc)
+            return None
+
+    @staticmethod
+    def _get_focused_target_element(target: CorrectionTarget, auto: Any) -> Optional[Any]:
+        """Get a fresh UIA element only when the exact captured target is focused."""
+        # Fail before initializing/querying UIA when the capture did not expose
+        # enough identity to distinguish this control from its siblings.
+        if not target.process_id or (not target.automation_id and not target.control_name):
+            return None
+        try:
+            focused = auto.GetFocusedControl()
+            if focused is None:
+                return None
+
+            process_id = int(getattr(focused, "ProcessId", 0) or 0)
+            hwnd = int(getattr(focused, "NativeWindowHandle", 0) or 0)
+            automation_id = str(getattr(focused, "AutomationId", "") or "")
+            control_name = str(getattr(focused, "Name", "") or "")
+            control_type = str(getattr(focused, "ControlTypeName", "") or "")
+
+            if process_id != target.process_id:
+                return None
+            if target.hwnd and hwnd != target.hwnd:
+                return None
+            if target.automation_id and automation_id != target.automation_id:
+                return None
+            if target.control_name and control_name != target.control_name:
+                return None
+            if target.control_type and control_type != target.control_type:
+                return None
+
+            # HWND-only identity is not sufficient: multiple child controls can
+            # share their top-level native window handle.
+            if not target.automation_id and not target.control_name:
+                return None
+            return focused
         except Exception:
             return None
 
     @staticmethod
-    def _resolve_scintilla_hwnd(hwnd: int) -> Optional[int]:
-        """递归解析实际的 Scintilla 编辑器 HWND（支持任意深度子孙窗口遍历）。
-        - 如果 hwnd 本身为 Scintilla，返回 hwnd。
-        - 否则优先通过 FindWindowExW 查找，或深度递归遍历所有后代窗口查找类名严格为 "Scintilla" 的窗口。
-        - 找不到返回 None。
+    def _is_original_target_focused(target: CorrectionTarget, auto: Any) -> bool:
+        """Require the exact captured control identity before sending keystrokes."""
+        return BackgroundCorrectionEngine._get_focused_target_element(target, auto) is not None
+
+    @staticmethod
+    def _read_text_pattern(element: Any, auto: Any) -> tuple[Optional[Any], Optional[Any], Optional[str]]:
+        """Return a live TextPattern, its DocumentRange, and the full text.
+
+        None text means reading failed; an empty string is a valid empty document.
+        ValuePattern/LegacyIAccessible are intentionally not write fallbacks.
         """
-        if not hwnd or platform.system() != "Windows":
-            return None
-        try:
-            import ctypes
-            if not hasattr(ctypes, "windll"):
-                return None
-            user32 = ctypes.windll.user32
-            
-            logger.info(f"[Phase8G diagnostic] Resolving Scintilla from HWND {hwnd}...")
-            
-            buf = ctypes.create_unicode_buffer(256)
-            user32.GetClassNameW(hwnd, buf, 256)
-            if "scintilla" in buf.value.lower():
-                return int(hwnd)
-                
-            # 1. 尝试直接/递归使用 FindWindowExW (兼容单层测试)
+        for pattern_id in (auto.PatternId.TextPattern, auto.PatternId.TextPattern2):
             try:
-                child = user32.FindWindowExW(hwnd, 0, "Scintilla", None)
-                if child and isinstance(child, int) and child != 0:
-                    return int(child)
-            except Exception:
-                pass
-                
-            # 2. 深度/广度递归遍历所有后代窗口
-            seen = set()
-            stack = [int(hwnd)]
-            
-            while stack:
-                curr = stack.pop()
-                if curr in seen:
+                pattern = element.GetPattern(pattern_id)
+                if pattern is None:
                     continue
-                seen.add(curr)
-                
-                buf = ctypes.create_unicode_buffer(256)
-                user32.GetClassNameW(curr, buf, 256)
-                cls_name = buf.value
-                
-                if "scintilla" in cls_name.lower():
-                    logger.info(f"[Phase8G diagnostic] Resolved Scintilla HWND {curr} with class {cls_name}")
-                    return curr
-                    
-                children = []
-                def enum_child_proc(child_hwnd, lparam):
-                    children.append(int(child_hwnd))
-                    return True
-                    
-                try:
-                    proc_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-                    user32.EnumChildWindows(curr, proc_type(enum_child_proc), 0)
-                except Exception:
-                    try:
-                        user32.EnumChildWindows(curr, enum_child_proc, 0)
-                    except Exception:
-                        pass
-                for child in reversed(children):
-                    if child not in seen:
-                        stack.append(child)
-                        
-            logger.info(f"[Phase8G diagnostic] Failed to resolve Scintilla HWND from initial HWND {hwnd}")
-            return None
-        except Exception as e:
-            logger.debug(f"Error recursively resolving Scintilla HWND from {hwnd}: {e}")
-            return None
+                document_range = pattern.DocumentRange
+                if document_range is None:
+                    continue
+                text = document_range.GetText(-1)
+                if text is None:
+                    continue
+                return pattern, document_range, str(text)
+            except Exception as exc:
+                logger.debug("Unable to read UIA TextPattern %s: %s", pattern_id, exc)
+        return None, None, None
 
     @staticmethod
-    def _is_scintilla_target(target: CorrectionTarget, element: Any) -> bool:
-        """判断目标是否为 Notepad++ / Scintilla 控件。
-        严格要求：
-        - 必须是 Notepad++ 目标 (app_name 包含 notepad++)
-        - 且能成功递归解析出实际的 Scintilla HWND。
-        """
-        if not target:
-            return False
-            
-        app_name = (target.app_name or "").lower()
-        if not ("notepad++" in app_name or "notepad++.exe" in app_name):
-            return False
-            
-        hwnd = target.hwnd
-        if not hwnd and element:
-            try:
-                hwnd = int(getattr(element, "NativeWindowHandle", 0))
-            except Exception:
-                hwnd = 0
-                
-        scintilla_hwnd = BackgroundCorrectionEngine._resolve_scintilla_hwnd(hwnd)
-        if scintilla_hwnd:
-            try:
-                import ctypes
-                buf = ctypes.create_unicode_buffer(256)
-                ctypes.windll.user32.GetClassNameW(scintilla_hwnd, buf, 256)
-                if "scintilla" in buf.value.lower():
-                    logger.info(f"[Phase8G diagnostic] Notepad++ Scintilla target verified: HWND {scintilla_hwnd}, class {buf.value}")
-                    return True
-            except Exception:
-                return True
-                
-        return False
+    def _build_exact_range(
+        document_range: Any,
+        document_text: str,
+        start: int,
+        end: int,
+        expected_text: str,
+        auto: Any,
+    ) -> Optional[Any]:
+        """Map Python offsets to a UIA character range and verify both contexts.
 
-    @staticmethod
-    def _apply_scintilla_fallback(target: CorrectionTarget, finding: Finding, current_text: str) -> bool:
-        """使用 Win32 SendMessage 与 Scintilla 消息 (SCI_SETSEL, SCI_REPLACESEL, SCI_GETTEXT, SCI_GETTEXTLENGTH)
-        精确替换原 finding 范围文本，并通过硬后置写入验证 (Hard Post-Write Verification) 确保文档实际变更。
+        UIA providers can expose character boundaries differently for complex
+        Unicode and may count supplementary characters as UTF-16 code units.
+        Prefix, selected text, and suffix comparisons make any offset mismatch
+        a hard refusal rather than risking a nearby or repeated word.
         """
-        if platform.system() != "Windows":
-            logger.debug("Scintilla fallback skipped: not Windows platform.")
-            return False
-            
-        hwnd = target.hwnd
-        if not hwnd and target.element_ref:
-            try:
-                hwnd = int(getattr(target.element_ref, "NativeWindowHandle", 0))
-            except Exception:
-                hwnd = 0
-                
-        scintilla_hwnd = BackgroundCorrectionEngine._resolve_scintilla_hwnd(hwnd)
-        if not scintilla_hwnd:
-            logger.warning(f"Scintilla fallback failed: No Scintilla HWND could be resolved from target hwnd {hwnd}.")
-            return False
-            
-        start = finding.start
-        end = finding.end
-        replacement = finding.replacement
-        
         try:
-            import ctypes
-            user32 = ctypes.windll.user32
-            
-            SCI_GETTEXTLENGTH = 2183
-            SCI_GETTEXT = 2182
-            SCI_SETSEL = 2160
-            SCI_REPLACESEL = 2170
-            
-            # 1. 实时读取 Scintilla 文档内容进行前置校验 / 过时防护
-            length = user32.SendMessageW(scintilla_hwnd, SCI_GETTEXTLENGTH, 0, 0)
-            if length <= 0:
-                logger.warning("Scintilla fallback failed: Live document length is 0 or invalid.")
-                return False
-                
-            buf = ctypes.create_unicode_buffer(length + 1)
-            user32.SendMessageW(scintilla_hwnd, SCI_GETTEXT, length + 1, buf)
-            live_text = buf.value
-            
-            if start < 0 or end < start or end > len(live_text):
-                logger.warning(f"Scintilla fallback rejection: offset range [{start}, {end}] out of bounds for live text of length {len(live_text)}.")
-                return False
-                
-            if finding.original != "" and live_text[start:end] != finding.original:
-                logger.warning(f"Scintilla fallback rejection: live text at [{start}:{end}] is '{live_text[start:end]}', expected '{finding.original}'. Text changed (stale).")
-                return False
-                
-            logger.info(f"Diagnostic: Applying Scintilla Win32 fallback via resolved HWND {scintilla_hwnd} (SCI_SETSEL({start}, {end}), SCI_REPLACESEL)")
-            
-            # 2. 选择范围并替换
-            user32.SendMessageW(scintilla_hwnd, SCI_SETSEL, ctypes.c_int(start), ctypes.c_int(end))
-            
-            success_replaced = False
-            try:
-                user32.SendMessageW(scintilla_hwnd, SCI_REPLACESEL, 0, ctypes.c_wchar_p(replacement))
-                success_replaced = True
-            except Exception as e_w:
-                logger.debug(f"SendMessageW SCI_REPLACESEL raised exception: {e_w}, trying SendMessageA")
-                try:
-                    rep_bytes = replacement.encode('utf-8')
-                    user32.SendMessageA(scintilla_hwnd, SCI_REPLACESEL, 0, rep_bytes)
-                    success_replaced = True
-                except Exception as e_a:
-                    logger.debug(f"SendMessageA SCI_REPLACESEL raised exception: {e_a}")
-                    raise
-                    
-            if not success_replaced:
-                logger.warning("Scintilla fallback failed: SCI_REPLACESEL execution failed.")
-                return False
-                
-            # 3. 硬后置写入验证 (Hard Post-Write Verification)
-            new_length = user32.SendMessageW(scintilla_hwnd, SCI_GETTEXTLENGTH, 0, 0)
-            new_buf = ctypes.create_unicode_buffer(new_length + 1)
-            user32.SendMessageW(scintilla_hwnd, SCI_GETTEXT, new_length + 1, new_buf)
-            post_live_text = new_buf.value
-            
-            expected_end = start + len(replacement)
-            if expected_end < 0 or expected_end > len(post_live_text):
-                logger.warning(f"Scintilla post-write verification failed: Expected end offset {expected_end} out of bounds for post-write text of length {len(post_live_text)}.")
-                return False
-                
-            actual_inserted = post_live_text[start:expected_end]
-            if actual_inserted != replacement:
-                logger.warning(f"Scintilla post-write verification failed: Expected replacement '{replacement}' at [{start}:{expected_end}], but found '{actual_inserted}' in live buffer.")
-                return False
-                
-            logger.info(f"Successfully verified Scintilla correction post-write: '{actual_inserted}' at range [{start}:{expected_end}].")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to execute Scintilla Win32 fallback correction and verification: {e}", exc_info=True)
-            return False
+            unit = auto.TextUnit.Character
+            endpoint_start = auto.TextPatternRangeEndpoint.Start
+            endpoint_end = auto.TextPatternRangeEndpoint.End
+
+            # Python indexes Unicode code points. Some UIA providers expose
+            # TextUnit.Character offsets as UTF-16 code units instead. Try both
+            # coordinate systems, but accept a range only when the selected
+            # text and its complete prefix/suffix match byte-for-byte.
+            python_units = (len(document_text), start, end)
+            utf16_length = len(document_text.encode("utf-16-le", errors="surrogatepass")) // 2
+            utf16_start = len(document_text[:start].encode("utf-16-le", errors="surrogatepass")) // 2
+            utf16_end = len(document_text[:end].encode("utf-16-le", errors="surrogatepass")) // 2
+            coordinate_sets = [python_units, (utf16_length, utf16_start, utf16_end)]
+
+            for total_units, start_units, end_units in coordinate_sets:
+                text_range = document_range.Clone()
+                start_delta = text_range.MoveEndpointByUnit(
+                    endpoint_start, unit, start_units, waitTime=0
+                )
+                end_delta = text_range.MoveEndpointByUnit(
+                    endpoint_end, unit, end_units - total_units, waitTime=0
+                )
+                if start_delta != start_units or end_delta != end_units - total_units:
+                    continue
+                if text_range.GetText(-1) != expected_text:
+                    continue
+
+                prefix = document_range.Clone()
+                prefix_delta = prefix.MoveEndpointByUnit(
+                    endpoint_end, unit, start_units - total_units, waitTime=0
+                )
+                if prefix_delta != start_units - total_units:
+                    continue
+                if prefix.GetText(-1) != document_text[:start]:
+                    continue
+
+                suffix = document_range.Clone()
+                suffix_delta = suffix.MoveEndpointByUnit(
+                    endpoint_start, unit, end_units, waitTime=0
+                )
+                if suffix_delta != end_units:
+                    continue
+                if suffix.GetText(-1) != document_text[end:]:
+                    continue
+
+                return text_range
+
+            return None
+        except Exception as exc:
+            logger.debug("Unable to construct exact UIA text range: %s", exc)
+            return None

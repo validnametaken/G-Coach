@@ -23,7 +23,9 @@ class DummyEngine(BaseAnalysisEngine):
 
 class TestPersonalDictionary(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        # The host's default TEMP location may be sandbox-protected on
+        # Windows. Keep test data in a disposable directory under the repo.
+        self.temp_dir = tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent)
         self.dict_path = Path(self.temp_dir.name) / "dictionary.json"
         self.dictionary = PersonalDictionary(storage_path=self.dict_path)
 
@@ -236,10 +238,10 @@ class TestPersonalDictionary(unittest.TestCase):
         screen_left, screen_top, screen_w, screen_h = 0, 0, 1920, 1080
         popup_w, popup_h = 300, 150
 
-        # 1. Enough room on right -> popup goes right
-        # main_x = 100, width = 500 -> right edge is 600. popup_x = 600 + 20 = 620
+        # 1. Enough room on right -> popup goes right of its anchor rectangle
         x, y = calculate_popup_position(100, 100, 500, 400, popup_w, popup_h, screen_left, screen_top, screen_w, screen_h)
         self.assertEqual(x, 620)
+        self.assertEqual(y, 520)
 
         # 2. Not enough room on right but enough on left -> popup goes left
         # main_x = 1500, width = 300 -> right edge 1800 + 20 = 1820 + 300 = 2120 > 1920. Left candidate = 1500 - 300 - 20 = 1180 >= 0
@@ -251,19 +253,21 @@ class TestPersonalDictionary(unittest.TestCase):
         x, y = calculate_popup_position(10, 100, 1900, 400, popup_w, popup_h, screen_left, screen_top, screen_w, screen_h)
         self.assertEqual(x, 1620)
 
-        # 4. Popup near bottom of screen -> vertical position is clamped
-        # main_y = 1000 -> popup_y = 1000 + 150 = 1150 > 1080 - 150 = 930
+        # 4. Popup near bottom of screen -> it is placed above the anchor
         x, y = calculate_popup_position(100, 1000, 500, 400, popup_w, popup_h, screen_left, screen_top, screen_w, screen_h)
-        self.assertEqual(y, 930)
+        self.assertEqual(y, 830)
 
-        # 5. Popup near top of screen -> vertical position remains valid
-        # main_y = 10 -> popup_y = 10 + 150 = 160 >= 0
+        # 5. Popup near top of screen -> it is placed below the anchor
         x, y = calculate_popup_position(100, 10, 500, 400, popup_w, popup_h, screen_left, screen_top, screen_w, screen_h)
-        self.assertEqual(y, 160)
+        self.assertEqual(y, 430)
 
         # 6. Specific requirement: 1920x1080 screen with main window around x=1200 and width around 927 must NOT produce popup x > 1920
         x, y = calculate_popup_position(1200, 100, 927, 700, popup_w, popup_h, screen_left, screen_top, screen_w, screen_h)
         self.assertLessEqual(x + popup_w, 1920)
         self.assertGreaterEqual(x, 0)
+
+        # 7. Small text ranges keep the popup close to the actual finding.
+        x, y = calculate_popup_position(600, 300, 50, 20, popup_w, popup_h, screen_left, screen_top, screen_w, screen_h)
+        self.assertEqual((x, y), (670, 340))
 
 

@@ -5,6 +5,7 @@
 import abc
 import logging
 import platform
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
@@ -125,6 +126,57 @@ class WindowsUIAccessibilityTextSource(TextSource):
 
     def __init__(self):
         self._is_windows = platform.system() == "Windows"
+        self._uia_thread_id: Optional[int] = None
+        self._uia_initializer: Optional[Any] = None
+        self._uia_init_lock = threading.RLock()
+
+    def initialize_for_current_thread(self) -> None:
+        """Initialize UIA COM on the single thread that owns this text source.
+
+        The installed ``uiautomation`` package explicitly forbids using a
+        Control or Pattern from another thread. G-Coach therefore performs
+        capture, popup geometry, and correction on the monitor thread only.
+        """
+        if not self._is_windows:
+            return
+
+        thread_id = threading.get_ident()
+        with self._uia_init_lock:
+            if self._uia_thread_id == thread_id and self._uia_initializer is not None:
+                return
+            if self._uia_thread_id is not None and self._uia_thread_id != thread_id:
+                raise RuntimeError("Windows UI Automation is owned by a different thread.")
+
+            import uiautomation as auto
+
+            self._uia_initializer = auto.UIAutomationInitializerInThread()
+            self._uia_thread_id = thread_id
+            logger.debug("Initialized UI Automation on the monitor thread.")
+
+    def uninitialize_for_current_thread(self) -> None:
+        """Release the UIA client on the same thread that initialized it."""
+        if not self._is_windows:
+            return
+
+        with self._uia_init_lock:
+            if self._uia_thread_id is None:
+                return
+            if self._uia_thread_id != threading.get_ident():
+                raise RuntimeError("UI Automation must be uninitialized by its owning thread.")
+
+            # Release the package's process-wide COM client before CoUninitialize.
+            # No UIA Control/Pattern objects are retained in snapshots or targets.
+            try:
+                import uiautomation.uiautomation as uia_module
+
+                uia_module._AutomationClient._instance = None
+            finally:
+                initializer = self._uia_initializer
+                self._uia_initializer = None
+                self._uia_thread_id = None
+                if initializer is not None:
+                    initializer.Uninitialize()
+                logger.debug("Uninitialized UI Automation on the monitor thread.")
 
     def get_current_text(self) -> TextSnapshot:
         if not self._is_windows:
@@ -142,7 +194,13 @@ class WindowsUIAccessibilityTextSource(TextSource):
                 error_message="Windows UI Automation is only available on Windows platforms.",
             )
 
+        # A one-off caller (for example a diagnostic or a test) gets a
+        # temporary COM apartment. The LiveTextMonitor initializes this source
+        # before polling, so its owner thread keeps the apartment for the full
+        # monitor lifetime.
+        temporary_initialization = self._uia_thread_id is None
         try:
+            self.initialize_for_current_thread()
             snapshot_data = self._fetch_focused_control_via_uia()
             return TextSnapshot(
                 text=snapshot_data["text"],
@@ -156,7 +214,13 @@ class WindowsUIAccessibilityTextSource(TextSource):
                 is_editable=snapshot_data["is_editable"],
                 status="ready" if snapshot_data["is_editable"] else "unsupported",
                 error_message=None if snapshot_data["is_editable"] else "Focused control is not editable.",
-                metadata=snapshot_data["metadata"],
+                # Do not let a provider accidentally leak its COM-backed
+                # Control/Pattern wrapper into MonitorState or the Qt thread.
+                metadata={
+                    key: value
+                    for key, value in snapshot_data["metadata"].items()
+                    if key != "element_ref"
+                },
             )
         except Exception as e:
             logger.debug(f"Could not retrieve text via Windows UI Automation: {e}")
@@ -173,21 +237,99 @@ class WindowsUIAccessibilityTextSource(TextSource):
                 status="unsupported",
                 error_message=str(e),
             )
+        finally:
+            if temporary_initialization and self._uia_thread_id == threading.get_ident():
+                self.uninitialize_for_current_thread()
 
     def _fetch_focused_control_via_uia(self) -> Dict[str, Any]:
         import uiautomation as auto
+        import os
+
+        # Capture the real foreground process independently of UIA focus. The
+        # focused element can be a child with NativeWindowHandle == 0, or UIA
+        # may briefly report no focused element while the foreground app stays
+        # the same.
+        foreground_hwnd = 0
+        foreground_process_id = 0
+        foreground_is_self = False
+        try:
+            import win32gui
+            import win32process
+
+            foreground_hwnd = int(win32gui.GetForegroundWindow() or 0)
+            if foreground_hwnd:
+                _foreground_thread_id, foreground_process_id = win32process.GetWindowThreadProcessId(
+                    foreground_hwnd
+                )
+                foreground_process_id = int(foreground_process_id or 0)
+                foreground_is_self = bool(
+                    foreground_process_id and foreground_process_id == os.getpid()
+                )
+        except Exception as exc:
+            logger.debug("Could not identify the foreground Windows process: %s", exc)
+
+        def process_image_path(pid: int) -> str:
+            if not pid:
+                return ""
+            handle = None
+            try:
+                import win32api
+                import win32process
+
+                handle = win32api.OpenProcess(0x1000, False, int(pid))
+                return str(win32process.GetModuleFileNameEx(handle, 0) or "")
+            except Exception as exc:
+                logger.debug("Could not resolve executable for process %s: %s", pid, exc)
+                return ""
+            finally:
+                if handle is not None:
+                    try:
+                        import win32api
+                        win32api.CloseHandle(handle)
+                    except Exception:
+                        pass
+
+        foreground_process_path = process_image_path(foreground_process_id)
+        foreground_app_name = foreground_process_path.replace("/", "\\").rsplit("\\", 1)[-1]
+
+        # G-Coach-owned windows can become the Windows foreground window.
+        # Mark that case explicitly so the monitor can retain its last
+        # external target. A non-activating child control can also receive UIA
+        # focus while the editor remains foreground; that is handled below.
+        foreground_metadata = {
+            "foreground_hwnd": foreground_hwnd,
+            "foreground_process_id": foreground_process_id,
+            "foreground_app_name": foreground_app_name,
+            "foreground_identity": (
+                f"pid:{foreground_process_id}"
+                if foreground_process_id
+                else (f"exe:{foreground_app_name.casefold()}" if foreground_app_name else None)
+            ),
+            "foreground_is_self": foreground_is_self,
+        }
+        if foreground_is_self:
+            return {
+                "text": "",
+                "app_name": foreground_app_name or "G-Coach",
+                "control_info": "G-Coach internal window",
+                "control_id": "",
+                "control_type": "",
+                "process_id": foreground_process_id,
+                "is_editable": False,
+                "metadata": foreground_metadata,
+            }
 
         focused = auto.GetFocusedControl()
         if not focused:
             return {
                 "text": "",
-                "app_name": "Unknown",
+                "app_name": foreground_app_name or "Unknown",
                 "control_info": "No Focus",
                 "control_id": "",
                 "control_type": "",
                 "process_id": 0,
                 "is_editable": False,
-                "metadata": {},
+                "metadata": foreground_metadata,
             }
 
         control_type = str(focused.ControlTypeName)
@@ -196,6 +338,37 @@ class WindowsUIAccessibilityTextSource(TextSource):
         process_id = int(getattr(focused, "ProcessId", 0))
         hwnd = int(getattr(focused, "NativeWindowHandle", 0))
         automation_id = str(getattr(focused, "AutomationId", ""))
+
+        # A non-activating G-Coach dropdown can receive UIA keyboard/mouse
+        # focus while the external editor remains the actual foreground
+        # window. Its ListItemControl must never be mistaken for the editor's
+        # document buffer (for example, the focused item name "happy").
+        uia_focus_is_self = bool(process_id and process_id == os.getpid())
+        if uia_focus_is_self:
+            return {
+                "text": "",
+                "app_name": foreground_app_name or "G-Coach",
+                "control_info": "G-Coach internal UI Automation control",
+                "control_id": "",
+                "control_type": control_type,
+                "process_id": process_id,
+                "is_editable": False,
+                "metadata": {
+                    **foreground_metadata,
+                    "uia_focus_is_self": True,
+                    "automation_id": automation_id,
+                    "control_name": name,
+                    "hwnd": hwnd,
+                    "class_name": str(getattr(focused, "ClassName", "") or ""),
+                    "uia_process_id": process_id,
+                    "uia_control_type": control_type,
+                    "uia_control_name": name,
+                    "uia_automation_id": automation_id,
+                },
+            }
+
+        uia_process_path = process_image_path(process_id)
+        uia_app_name = uia_process_path.replace("/", "\\").rsplit("\\", 1)[-1]
 
         is_editable = True
         non_editable_types = {"ButtonControl", "ImageControl", "TextControl", "CheckBoxControl", "RadioButtonControl", "MenuControl", "MenuItemControl", "ScrollBarControl", "ProgressBarControl", "SliderControl"}
@@ -254,17 +427,10 @@ class WindowsUIAccessibilityTextSource(TextSource):
 
         control_id = f"pid:{process_id}-hwnd:{hwnd}-autoid:{automation_id}-type:{control_type}-name:{name}"
 
-        app_name = class_name or control_type
-        try:
-            import win32process
-            import win32api
-            if hwnd:
-                handle = win32api.OpenProcess(0x1000, False, process_id)
-                path = win32process.GetModuleFileNameEx(handle, 0)
-                win32api.CloseHandle(handle)
-                app_name = path.rsplit("\\", 1)[-1]
-        except Exception:
-            pass
+        # Prefer the actual foreground executable. If foreground lookup is
+        # unavailable, use the UIA element's process executable; never use its
+        # ControlTypeName as the application identity.
+        app_name = foreground_app_name or uia_app_name or class_name or ""
 
         control_info = f"{control_type} | {name}" if name else control_type
 
@@ -278,8 +444,14 @@ class WindowsUIAccessibilityTextSource(TextSource):
             "is_editable": is_editable,
             "metadata": {
                 "automation_id": automation_id,
+                "control_name": name,
                 "hwnd": hwnd,
                 "class_name": class_name,
-                "element_ref": focused,
+                "uia_process_id": process_id,
+                "uia_focus_is_self": False,
+                "uia_control_type": control_type,
+                "uia_control_name": name,
+                "uia_automation_id": automation_id,
+                **foreground_metadata,
             },
         }

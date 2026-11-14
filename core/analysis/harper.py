@@ -36,6 +36,22 @@ class HarperAnalysisEngine(BaseAnalysisEngine):
     def supports_auto_fix(self) -> bool:
         return True
 
+    @staticmethod
+    def _utf16_boundary_map(text: str) -> Dict[int, int]:
+        """Map JavaScript UTF-16 offsets to Python string character offsets.
+
+        Harper's spans are returned by ``harper.js`` and are consumed by
+        JavaScript ``String.slice``, so their offsets count UTF-16 code units.
+        G-Coach findings use Python character offsets. Only valid code-point
+        boundaries are included; an offset inside a surrogate pair is invalid.
+        """
+        boundaries = {0: 0}
+        utf16_offset = 0
+        for python_offset, character in enumerate(text, start=1):
+            utf16_offset += 2 if ord(character) > 0xFFFF else 1
+            boundaries[utf16_offset] = python_offset
+        return boundaries
+
     def analyze(self, text: str) -> List[Finding]:
         """对输入文本进行本地 Harper 语法分析，返回标准化 Findings 列表。
 
@@ -58,8 +74,7 @@ class HarperAnalysisEngine(BaseAnalysisEngine):
             )
 
             if result.returncode != 0:
-                stderr_msg = result.stderr.decode("utf-8", errors="ignore")
-                logger.warning(f"Harper analysis subprocess failed: {stderr_msg}")
+                logger.warning("Harper analysis subprocess failed (exit code %s).", result.returncode)
                 return []
 
             stdout_data = result.stdout.decode("utf-8", errors="ignore").strip()
@@ -68,17 +83,29 @@ class HarperAnalysisEngine(BaseAnalysisEngine):
 
             raw_findings = json.loads(stdout_data)
             findings: List[Finding] = []
+            utf16_boundaries = self._utf16_boundary_map(text)
 
             for item in raw_findings:
                 original = item.get("original", "")
-                start = item.get("start", 0)
-                end = item.get("end", 0)
+                raw_start = item.get("start")
+                raw_end = item.get("end")
 
-                # 校验文本范围切片是否与 original 匹配（针对边界、Unicode等）
-                if 0 <= start <= end <= len(text):
-                    sliced = text[start:end]
-                    if sliced != original:
-                        logger.debug(f"Harper span text mismatch: expected '{original}', got slice '{sliced}'")
+                # Normalize JavaScript UTF-16 offsets at the engine boundary
+                # so every Finding in G-Coach consistently uses Python offsets.
+                if (
+                    isinstance(raw_start, bool)
+                    or not isinstance(raw_start, int)
+                    or isinstance(raw_end, bool)
+                    or not isinstance(raw_end, int)
+                ):
+                    logger.debug("Harper returned a finding with invalid text offsets.")
+                    continue
+
+                start = utf16_boundaries.get(raw_start)
+                end = utf16_boundaries.get(raw_end)
+                if start is None or end is None or end < start or text[start:end] != original:
+                    logger.debug("Harper returned a finding whose offsets do not match the source text.")
+                    continue
 
                 replacements = item.get("replacements", [])
                 replacement = replacements[0] if replacements else ""
@@ -86,6 +113,19 @@ class HarperAnalysisEngine(BaseAnalysisEngine):
 
                 category = item.get("category", "Grammar").lower().replace(" ", "_")
                 message = item.get("message", "Grammar suggestion")
+
+                # Harper's spelling rule can mistake uppercase abbreviations
+                # such as "MB" for misspelled words in explanatory text.
+                # Keep these terms intact while still allowing contextual
+                # WordChoice findings (for example, "10 MB" -> "megabytes").
+                if (
+                    category == "spelling"
+                    and len(original) >= 2
+                    and original.isalpha()
+                    and original.isupper()
+                ):
+                    logger.debug("Ignoring a Harper spelling suggestion for an uppercase term.")
+                    continue
 
                 # Harper 是确定性规则检查器，置信度设为 1.0
                 confidence = 1.0
