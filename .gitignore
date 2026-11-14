@@ -39,3 +39,6 @@ Thumbs.db
 # Local development / OpenHands
 node_modules/
 .agents_tmp/
+
+# Large local GECToR model data
+models/gector/model.onnx.data
