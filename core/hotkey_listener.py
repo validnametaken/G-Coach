@@ -1,6 +1,6 @@
 """
-全局快捷键监听器 - 获取选中文本并替换
-使用 keyboard 库实现全局热键
+Global Hotkey Listener - Captures selected text and replaces it
+Using keyboard library for global shortcuts
 """
 
 import threading
@@ -15,7 +15,7 @@ from core.selection_resolver import SelectionResolver
 
 
 class HotkeyListener:
-    """全局快捷键监听 + 选中文本替换"""
+    """Global hotkey listener + selected text replacement."""
 
     def __init__(self, config_manager, api_client, prompt_manager):
         self.config_manager = config_manager
@@ -35,7 +35,7 @@ class HotkeyListener:
         self._log_file = Path.home() / ".ai_prompt_optimizer" / "hotkey_debug.log"
         self._selection_resolver = SelectionResolver(self._log)
 
-        self._log("INIT", "初始化完成")
+        self._log("INIT", "Initialization completed")
 
     def _log(self, event: str, message: str = ""):
         line = f"[HotkeyListener][pid={os.getpid()}][run={self._run_id}][{event}] {message}"
@@ -61,17 +61,17 @@ class HotkeyListener:
         try:
             self._register_hotkey()
             hotkey_str = self._build_hotkey_string()
-            self._on_status(f"全局快捷键已启动: {hotkey_str}")
-            self._log("START", f"启动成功，快捷键: {hotkey_str}")
+            self._on_status(f"Global hotkey active: {hotkey_str}")
+            self._log("START", f"Started successfully, hotkey: {hotkey_str}")
         except Exception as e:
             self._running = False
-            self._on_status(f"快捷键启动失败: {e}")
-            self._log("START_FAIL", f"启动失败: {e}")
+            self._on_status(f"Failed to start hotkey: {e}")
+            self._log("START_FAIL", f"Start failed: {e}")
 
     def stop(self):
         self._running = False
         self._unregister_hotkey()
-        self._on_status("全局快捷键已停止")
+        self._on_status("Global hotkey stopped")
 
     def restart(self):
         was_running = self._running
@@ -105,12 +105,12 @@ class HotkeyListener:
             self._hotkey_id = None
 
     def _on_hotkey_triggered(self):
-        self._log("TRIGGER", "热键被触发")
+        self._log("TRIGGER", "Hotkey triggered")
         if not self._workflow_lock.acquire(blocking=False):
-            self._log("TRIGGER_IGNORED", "已有工作流正在执行")
+            self._log("TRIGGER_IGNORED", "Workflow already in progress")
             return
         if self._hotkey_pressed:
-            self._log("TRIGGER_IGNORED", "状态仍在处理中")
+            self._log("TRIGGER_IGNORED", "Status still processing")
             self._workflow_lock.release()
             return
         self._hotkey_pressed = True
@@ -122,12 +122,12 @@ class HotkeyListener:
             raise
 
     def _release_modifiers(self):
-        """释放所有修饰键"""
+        """Release all modifier keys."""
         for vk in [0x11, 0x10, 0x12, 0x5B]:  # Ctrl, Shift, Alt, Win
             self._user32.keybd_event(vk, 0, 2, 0)  # KEYEVENTF_KEYUP
 
     def _bring_to_front(self, hwnd):
-        """将窗口带到前台"""
+        """Bring window to foreground."""
         target_tid = self._user32.GetWindowThreadProcessId(hwnd, None)
         my_tid = self._kernel32.GetCurrentThreadId()
         if target_tid != my_tid:
@@ -138,39 +138,39 @@ class HotkeyListener:
             self._user32.AttachThreadInput(my_tid, target_tid, False)
 
     def _replace_workflow(self):
-        """替换工作流"""
+        """Replacement workflow."""
         processing_started = False
         import time
-        self._log("WORKFLOW_START", "工作流开始，重置状态")
-        # 确保从干净状态开始，重置加载窗口
+        self._log("WORKFLOW_START", "Workflow started, resetting status")
+        # Ensure starting from clean status, reset loading window
         self._on_processing_end()
         try:
-            self._log("WORKFLOW_RESET_DONE", "状态重置完成")
-            self._log("WORKFLOW_RUNNING", "开始工作流")
+            self._log("WORKFLOW_RESET_DONE", "Status reset completed")
+            self._log("WORKFLOW_RUNNING", "Starting workflow")
 
-            # 1. 保存目标窗口
+            # 1. Save target window
             target_hwnd = self._user32.GetForegroundWindow()
             title_len = self._user32.GetWindowTextLengthW(target_hwnd)
             if title_len > 0:
                 buf = ctypes.create_unicode_buffer(title_len + 1)
                 self._user32.GetWindowTextW(target_hwnd, buf, title_len + 1)
-                self._log("TARGET", f"目标窗口: {buf.value}")
+                self._log("TARGET", f"Target window: {buf.value}")
 
-            # 2. 释放修饰键
+            # 2. Release modifier keys
             self._release_modifiers()
             time.sleep(0.05)
 
-            # 3. 先只更新状态，不显示加载动画；确认有明确选中文本后再进入处理态
-            self._on_status("正在获取选中文本...")
+            # 3. Update status first without showing loading animation; confirm clear selection before processing
+            self._on_status("Fetching selected text...")
 
-            # 4. 确保目标窗口仍有焦点
+            # 4. Ensure target window still has focus
             current_hwnd = self._user32.GetForegroundWindow()
             if current_hwnd != target_hwnd:
-                print(f"[HotkeyListener] 焦点丢失，恢复中...")
+                print(f"[HotkeyListener] Focus lost, restoring...")
                 self._bring_to_front(target_hwnd)
                 time.sleep(0.1)
 
-            # 5. 使用分层选区解析器：UIA/Accessibility 优先；剪贴板只对白名单普通软件启用。
+            # 5. Use layered selection resolver: UIA/Accessibility preferred; clipboard enabled only for whitelisted standard apps.
             capture = self._selection_resolver.capture(target_hwnd)
             if not capture.ok:
                 self._log(
@@ -178,7 +178,7 @@ class HotkeyListener:
                     f"method={capture.method} app={capture.source_app} reason={capture.blocked_reason}",
                 )
                 self._on_processing_end()
-                self._on_status("未检测到明确选中文本")
+                self._on_status("No explicit text selection detected")
                 self._hotkey_pressed = False
                 return
             selected_text = capture.text
@@ -187,21 +187,20 @@ class HotkeyListener:
                 f"method={capture.method} app={capture.source_app} text={repr(selected_text[:50])}",
             )
 
-            # 6. 获取提示词
+            # 6. Get prompt
             active_id = self.config_manager.get_active_prompt_id()
             prompt = self.prompt_manager.get_by_id(active_id)
             if not prompt:
-                self._on_status("未找到激活的提示词")
+                self._on_status("Active prompt not found")
                 self._hotkey_pressed = False
-                # 确保加载窗口不会显示
                 self._on_processing_end()
                 return
-            self._log("PROMPT_SELECTED", f"使用提示词: {prompt['name']}")
+            self._log("PROMPT_SELECTED", f"Using prompt: {prompt['name']}")
             self._on_processing_start()
             processing_started = True
-            self._on_status("正在调用 AI...")
+            self._on_status("Invoking AI...")
 
-            # 11. 调用 API
+            # 11. Call API
             result_holder = {"text": None, "error": None}
             event = threading.Event()
 
@@ -220,10 +219,10 @@ class HotkeyListener:
                 on_error=on_error,
             )
 
-            self._log("API_ENTER", "等待 API 响应")
+            self._log("API_ENTER", "Waiting for API response")
             if not event.wait(timeout=20):
-                self._log("API_TIMEOUT", "API 20 秒无响应")
-                self._on_status("API 超时")
+                self._log("API_TIMEOUT", "API no response for 20s")
+                self._on_status("API timeout")
                 self._on_processing_end()
                 processing_started = False
                 self._hotkey_pressed = False
@@ -231,29 +230,29 @@ class HotkeyListener:
 
             if result_holder["error"]:
                 self._log("API_ERROR", result_holder["error"])
-                self._on_status(f"错误: {result_holder['error']}")
+                self._on_status(f"Error: {result_holder['error']}")
                 self._on_processing_end()
                 processing_started = False
                 self._hotkey_pressed = False
                 return
 
             if result_holder["text"] is None:
-                self._log("API_TIMEOUT", "API 返回为空")
-                self._on_status("API 超时")
+                self._log("API_TIMEOUT", "API returned empty")
+                self._on_status("API timeout")
                 self._on_processing_end()
                 processing_started = False
                 self._hotkey_pressed = False
                 return
 
             optimized_text = result_holder["text"].strip()
-            self._log("API_RESULT", f"优化结果: {repr(optimized_text[:50])}")
+            self._log("API_RESULT", f"Optimized result: {repr(optimized_text[:50])}")
 
-            # 12. 复制结果并粘贴
-            self._log("PASTE_ENTER", "准备复制结果并粘贴")
+            # 12. Copy result and paste
+            self._log("PASTE_ENTER", "Preparing to copy result and paste")
             pyperclip.copy(optimized_text)
             time.sleep(0.1)
 
-            # 确保目标窗口有焦点
+            # Ensure target window has focus
             current_hwnd = self._user32.GetForegroundWindow()
             if current_hwnd != target_hwnd:
                 self._bring_to_front(target_hwnd)
@@ -267,16 +266,14 @@ class HotkeyListener:
             time.sleep(0.02)
             self._user32.keybd_event(0x11, 0, 2, 0)    # Ctrl up
 
-            self._on_status("替换完成！")
+            self._on_status("Replacement completed!")
 
         except Exception as e:
-            print(f"[HotkeyListener] 异常: {e}")
+            print(f"[HotkeyListener] Exception: {e}")
             import traceback
             traceback.print_exc()
-            self._on_status(f"错误: {str(e)}")
+            self._on_status(f"Error: {str(e)}")
         finally:
             if processing_started:
                 self._on_processing_end()
             self._hotkey_pressed = False
-            if self._workflow_lock.locked():
-                self._workflow_lock.release()

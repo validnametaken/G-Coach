@@ -180,6 +180,103 @@ class TestAnalysisPipeline(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0], f1)
 
+    def test_tiered_engine_deduplication(self):
+        """Test that fast tier engines run first and deduplicate overlapping heavy tier findings."""
+        class FastDummyEngine(BaseAnalysisEngine):
+            def __init__(self):
+                super().__init__(name="fast_engine", tier="fast")
+            def analyze(self, text: str):
+                return [Finding("fast_engine", "spelling", "typo", "tehst", "test", 0, 5)]
+
+        class HeavyDummyEngine(BaseAnalysisEngine):
+            def __init__(self):
+                super().__init__(name="heavy_engine", tier="heavy")
+            def analyze(self, text: str):
+                return [
+                    # Overlapping spelling finding that should be deduplicated
+                    Finding("heavy_engine", "spelling", "heavy typo", "tehst", "test", 0, 5),
+                    # Non-overlapping grammar finding that should be kept
+                    Finding("heavy_engine", "grammar", "grammar issue", "go", "goes", 28, 30),
+                ]
+
+        pipeline = AnalysisPipeline()
+        pipeline.register_engine(FastDummyEngine())
+        pipeline.register_engine(HeavyDummyEngine())
+
+        findings = pipeline.analyze("tehst goes to the market and go fast.")
+        # Should contain fast_engine spelling finding and heavy_engine grammar finding,
+        # but the heavy_engine overlapping spelling finding should be deduplicated/skipped.
+        sources = [f.source for f in findings]
+        self.assertEqual(sources.count("fast_engine"), 1)
+        self.assertEqual(sources.count("heavy_engine"), 1)
+        self.assertEqual(findings[1].category, "grammar")
+
+    def test_enable_fast_and_heavy_toggles(self):
+        """Test that enable_fast and enable_heavy flags correctly control which tier engines run."""
+        class FastDummy(BaseAnalysisEngine):
+            def __init__(self):
+                super().__init__(name="fast_dummy", tier="fast")
+            def analyze(self, text: str):
+                return [Finding("fast_dummy", "spelling", "fast typo", "a", "b", 0, 1)]
+
+        class HeavyDummy(BaseAnalysisEngine):
+            def __init__(self):
+                super().__init__(name="heavy_dummy", tier="heavy")
+            def analyze(self, text: str):
+                return [Finding("heavy_dummy", "grammar", "heavy grammar", "c", "d", 2, 3)]
+
+        pipeline = AnalysisPipeline(enable_fast=True, enable_heavy=False)
+        pipeline.register_engine(FastDummy())
+        pipeline.register_engine(HeavyDummy())
+
+        findings = pipeline.analyze("text one")
+        sources = [f.source for f in findings]
+        self.assertIn("fast_dummy", sources)
+        self.assertNotIn("heavy_dummy", sources)
+
+        pipeline.enable_fast = False
+        pipeline.enable_heavy = True
+        findings2 = pipeline.analyze("text two")
+        sources2 = [f.source for f in findings2]
+        self.assertNotIn("fast_dummy", sources2)
+        self.assertIn("heavy_dummy", sources2)
+
+    def test_style_findings_do_not_suppress_heavy_grammar(self):
+        text = "This sentence is long enough for grammar checks."
+
+        class FastStyleEngine(BaseAnalysisEngine):
+            def __init__(self):
+                super().__init__(name="fast_style", tier="fast")
+
+            def analyze(self, text: str):
+                return [Finding(
+                    "fast_style", "style", "Style suggestion", text, text.upper(),
+                    0, len(text), severity="warning",
+                )]
+
+        class HeavyGrammarEngine(BaseAnalysisEngine):
+            def __init__(self):
+                super().__init__(name="heavy_grammar", tier="heavy")
+                self.calls = 0
+
+            def analyze(self, text: str):
+                self.calls += 1
+                start = text.index("sentence")
+                return [Finding(
+                    "heavy_grammar", "grammar", "Grammar finding", "sentence", "sentences",
+                    start, start + len("sentence"),
+                )]
+
+        pipeline = AnalysisPipeline()
+        fast_engine = FastStyleEngine()
+        heavy_engine = HeavyGrammarEngine()
+        pipeline.register_engine(fast_engine)
+        pipeline.register_engine(heavy_engine)
+
+        findings = pipeline.analyze(text)
+        self.assertEqual(heavy_engine.calls, 1)
+        self.assertIn("heavy_grammar", [finding.source for finding in findings])
+
 
 if __name__ == "__main__":
     unittest.main()

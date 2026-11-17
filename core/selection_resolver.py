@@ -41,6 +41,7 @@ class SelectionResolver:
         "notepad.exe",
         "wordpad.exe",
         "write.exe",
+        "wordcraft.exe",
     }
 
     HIGH_RISK_NAMES = (

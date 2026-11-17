@@ -1,5 +1,5 @@
 """
-配置管理器 - 管理 API 配置和快捷键设置
+Config Manager - Manages API configuration, hotkeys, and analysis settings
 """
 
 import json
@@ -20,6 +20,10 @@ class ConfigManager:
             "modifiers": ["ctrl", "shift"],
             "key": "o",
         },
+        "analysis": {
+            "enable_fast": True,
+            "enable_heavy": True,
+        },
         "active_prompt_id": "default",
     }
 
@@ -30,18 +34,18 @@ class ConfigManager:
         self._load()
 
     def _load(self):
-        """加载配置文件"""
+        """Load configuration file."""
         if self.config_file.exists():
             try:
                 with open(self.config_file, "r", encoding="utf-8") as f:
                     loaded = json.load(f)
-                    # 深度合并配置
+                    # Deep merge configuration
                     self._deep_update(self._config, loaded)
             except Exception:
                 pass
 
     def _deep_update(self, base: dict, update: dict):
-        """深度合并字典"""
+        """Deep merge dictionaries."""
         for key, value in update.items():
             if key in base and isinstance(base[key], dict) and isinstance(value, dict):
                 self._deep_update(base[key], value)
@@ -49,7 +53,7 @@ class ConfigManager:
                 base[key] = value
 
     def save(self):
-        """保存配置"""
+        """Save configuration."""
         self.config_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.config_file, "w", encoding="utf-8") as f:
             json.dump(self._config, f, ensure_ascii=False, indent=2)
@@ -66,6 +70,13 @@ class ConfigManager:
 
     def set_hotkey(self, modifiers: list, key: str):
         self._config["hotkey"] = {"modifiers": modifiers, "key": key}
+        self.save()
+
+    def get_analysis_config(self) -> dict:
+        return self._config.get("analysis", {"enable_fast": True, "enable_heavy": True})
+
+    def set_analysis_config(self, key: str, value):
+        self._config.setdefault("analysis", {})[key] = value
         self.save()
 
     def get_active_prompt_id(self) -> str:

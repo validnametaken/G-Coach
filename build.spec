@@ -9,7 +9,10 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('icon.ico', '.')],
+    datas=[
+        ('icon.ico', '.'),
+        ('core/analysis/rules/native_prose.yaml', 'core/analysis/rules'),
+    ],
     hiddenimports=[
         'keyboard._winkeyboard',
         'keyboard._generic',

@@ -1,0 +1,500 @@
+# Curated, conservative prose rules shipped with G-Coach.
+# IDs are permanent identifiers: do not rename them after release.
+# Document-scope terminology/capitalization rules are intentionally separate
+# from sentence and live-edit checks.
+rules:
+  # Wordiness and redundancy (sentence scope). These rules target clear
+  # tautologies, not merely longer but valid constructions with different nuance.
+  - id: prose-redundant-basic-fundamentals
+    pattern: '\bbasic fundamentals\b'
+    replacement: 'fundamentals'
+    category: wordiness
+    severity: info
+    message: "'Fundamentals' already refers to basic principles."
+    scope: sentence
+    confidence: 0.96
+
+  - id: prose-redundant-end-result
+    pattern: '\bend result\b'
+    replacement: 'result'
+    category: wordiness
+    severity: info
+    message: "'Result' already expresses the outcome; consider removing 'end'."
+    scope: sentence
+    confidence: 0.95
+
+  - id: prose-redundant-completely-eliminate
+    pattern: '\bcompletely eliminate\b'
+    replacement: 'eliminate'
+    category: wordiness
+    severity: info
+    message: "'Eliminate' already means to remove completely."
+    scope: sentence
+    confidence: 0.93
+
+  - id: prose-redundant-close-proximity
+    pattern: '\bin close proximity to\b'
+    replacement: 'near'
+    category: wordiness
+    severity: info
+    message: "'Proximity' already means nearness; consider removing the redundant wording."
+    scope: sentence
+    confidence: 0.93
+
+  - id: prose-redundant-past-history
+    pattern: '\bpast history\b'
+    replacement: 'history'
+    category: wordiness
+    severity: info
+    message: "'History' already refers to the past; consider removing the redundant modifier."
+    scope: sentence
+    confidence: 0.95
+
+  - id: prose-redundant-advance-planning
+    pattern: '\badvance planning\b'
+    replacement: 'planning'
+    category: wordiness
+    severity: info
+    message: "Planning is inherently done in advance; consider removing the redundant modifier."
+    scope: sentence
+    confidence: 0.94
+
+  - id: prose-redundant-future-plans
+    pattern: '\bfuture plans\b'
+    replacement: 'plans'
+    category: wordiness
+    severity: info
+    message: "Plans normally refer to future intentions; consider removing the redundant modifier."
+    scope: sentence
+    confidence: 0.91
+
+  - id: prose-redundant-unexpected-surprise
+    pattern: '\bunexpected surprise\b'
+    replacement: 'surprise'
+    category: wordiness
+    severity: info
+    message: "A surprise is inherently unexpected; consider removing the modifier."
+    scope: sentence
+    confidence: 0.96
+
+  - id: prose-redundant-free-gift
+    pattern: '\bfree gift\b'
+    replacement: 'gift'
+    category: wordiness
+    severity: info
+    message: "A gift is generally given without payment; remove 'free' only when no contrast is intended."
+    scope: sentence
+    confidence: 0.88
+
+  - id: prose-redundant-added-bonus
+    pattern: '\badded bonus\b'
+    replacement: 'bonus'
+    category: wordiness
+    severity: info
+    message: "A bonus is an addition; consider removing the redundant modifier."
+    scope: sentence
+    confidence: 0.94
+
+  - id: prose-redundant-new-innovation
+    pattern: '\bnew innovation\b'
+    replacement: 'innovation'
+    category: wordiness
+    severity: info
+    message: "An innovation is new by definition; consider removing the redundant modifier."
+    scope: sentence
+    confidence: 0.94
+
+  - id: prose-redundant-final-outcome
+    pattern: '\bfinal outcome\b'
+    replacement: 'outcome'
+    category: wordiness
+    severity: info
+    message: "Consider whether 'final' adds a necessary distinction to 'outcome'."
+    scope: sentence
+    confidence: 0.90
+
+  - id: prose-redundant-actual-fact
+    pattern: '\bactual fact\b'
+    replacement: 'fact'
+    category: wordiness
+    severity: info
+    message: "A fact is something actual; consider removing the redundant modifier."
+    scope: sentence
+    confidence: 0.93
+
+  # Weak or discouraged wording (suggestions, not grammar errors)
+  - id: prose-terminology-utilize
+    pattern: '\butilize\b'
+    replacement: 'use'
+    category: terminology
+    severity: info
+    message: "'Use' is usually clearer and more direct than 'utilize'."
+    scope: sentence
+    confidence: 0.88
+
+  - id: prose-terminology-commence
+    pattern: '\bcommence\b'
+    replacement: 'begin'
+    category: terminology
+    severity: info
+    message: "'Begin' is a plainer alternative to 'commence'."
+    scope: sentence
+    confidence: 0.87
+
+  - id: prose-terminology-prior-to
+    pattern: '\bprior to\b'
+    replacement: 'before'
+    category: terminology
+    severity: info
+    message: "'Before' is usually more direct than 'prior to'."
+    scope: sentence
+    confidence: 0.89
+
+  - id: prose-terminology-subsequent-to
+    pattern: '\bsubsequent to\b'
+    replacement: 'after'
+    category: terminology
+    severity: info
+    message: "'After' is usually more direct than 'subsequent to'."
+    scope: sentence
+    confidence: 0.89
+
+  - id: prose-terminology-endeavor-to
+    pattern: '\bendeavor to\b'
+    replacement: 'try to'
+    category: terminology
+    severity: info
+    message: "'Try to' is a simpler alternative to 'endeavor to'."
+    scope: sentence
+    confidence: 0.87
+
+  - id: prose-terminology-is-able-to
+    pattern: '\bis able to\b'
+    replacement: 'can'
+    category: terminology
+    severity: info
+    message: "'Can' is often more concise than 'is able to'. Keep the longer form when ability is the emphasis."
+    scope: sentence
+    confidence: 0.86
+
+  # Commonly confused expressions (sentence scope)
+  - id: prose-confused-your-invited
+    pattern: '\byour invited\b'
+    replacement: "you're invited"
+    category: confused-words
+    severity: warning
+    message: "Use 'you're' (= 'you are') rather than the possessive 'your'."
+    scope: sentence
+    confidence: 0.98
+
+  - id: prose-confused-their-is
+    pattern: '\btheir is\b'
+    replacement: 'there is'
+    category: confused-words
+    severity: warning
+    message: "Use 'there is' to introduce the existence of something."
+    scope: sentence
+    confidence: 0.98
+
+  - id: prose-confused-their-are
+    pattern: '\btheir are\b'
+    replacement: 'there are'
+    category: confused-words
+    severity: warning
+    message: "Use 'there are' to introduce the existence of multiple things."
+    scope: sentence
+    confidence: 0.98
+
+  - id: prose-confused-more-then
+    pattern: '\b(more|less|better|worse|greater|smaller|older|younger|taller|shorter|higher|lower)\s+then\b'
+    replacement: '\1 than'
+    category: confused-words
+    severity: warning
+    message: "Use 'than' for comparisons."
+    scope: sentence
+    confidence: 0.99
+
+  - id: prose-confused-less-then
+    pattern: '\bless then\b'
+    replacement: 'less than'
+    category: confused-words
+    severity: warning
+    message: "Use 'than' for comparisons: 'less than'."
+    scope: sentence
+    confidence: 0.99
+
+  - id: prose-confused-loose-weight
+    pattern: '\bloose weight\b'
+    replacement: 'lose weight'
+    category: confused-words
+    severity: warning
+    message: "The verb is 'lose'; 'loose' is an adjective meaning not tight."
+    scope: sentence
+    confidence: 0.98
+
+  - id: prose-confused-apart-of
+    pattern: '\bapart of\b'
+    replacement: 'a part of'
+    category: confused-words
+    severity: warning
+    message: "Use 'a part of' to mean included in something; 'apart' means separate."
+    scope: sentence
+    confidence: 0.96
+
+  - id: prose-confused-suppose-to
+    pattern: '\bsuppose to\b'
+    replacement: 'supposed to'
+    category: confused-words
+    severity: warning
+    message: "Use 'supposed to' in this expression."
+    scope: sentence
+    confidence: 0.99
+
+  - id: prose-confused-between-you-and-i
+    pattern: '\bbetween you and I\b'
+    replacement: 'between you and me'
+    category: confused-words
+    severity: warning
+    message: "Use the object pronoun 'me' after the preposition 'between'."
+    scope: sentence
+    confidence: 0.99
+
+  - id: prose-confused-one-in-the-same
+    pattern: '\bone in the same\b'
+    replacement: 'one and the same'
+    category: confused-words
+    severity: warning
+    message: "The established expression is 'one and the same'."
+    scope: sentence
+    confidence: 0.99
+
+  - id: prose-confused-mute-point
+    pattern: '\bmute point\b'
+    replacement: 'moot point'
+    category: confused-words
+    severity: warning
+    message: "The expression is 'moot point', meaning a point that is no longer relevant or open to debate."
+    scope: sentence
+    confidence: 0.99
+
+  - id: prose-confused-peak-my-interest
+    pattern: '\bpeak my interest\b'
+    replacement: 'pique my interest'
+    category: confused-words
+    severity: warning
+    message: "The expression is 'pique my interest', meaning to arouse my interest."
+    scope: sentence
+    confidence: 0.99
+
+  - id: prose-confused-deep-seeded
+    pattern: '\bdeep-seeded\b'
+    replacement: 'deep-seated'
+    category: confused-words
+    severity: warning
+    message: "The established expression is 'deep-seated'."
+    scope: sentence
+    confidence: 0.99
+
+  - id: prose-confused-escape-goat
+    pattern: '\bescape goat\b'
+    replacement: 'scapegoat'
+    category: confused-words
+    severity: warning
+    message: "The word is 'scapegoat', referring to someone unfairly blamed."
+    scope: sentence
+    confidence: 0.99
+
+  - id: prose-confused-all-intensive-purposes
+    pattern: '\ball intensive purposes\b'
+    replacement: 'all intents and purposes'
+    category: confused-words
+    severity: warning
+    message: "The established phrase is 'for all intents and purposes'."
+    scope: sentence
+    confidence: 0.99
+
+  - id: prose-confused-first-come-first-serve
+    pattern: '\bfirst come first serve\b'
+    replacement: 'first come, first served'
+    category: confused-words
+    severity: warning
+    message: "The established expression is 'first come, first served'."
+    scope: sentence
+    confidence: 0.96
+
+  - id: prose-grammar-modal-of
+    pattern: '\b(could|would|should|might|must)\s+of\b'
+    replacement: '\1 have'
+    category: grammar
+    severity: error
+    message: "Use 'have' after modal verbs, not 'of'."
+    scope: sentence
+    confidence: 0.99
+
+  - id: prose-grammar-had-went
+    pattern: '\b(had|have|has)\s+went\b'
+    replacement: '\1 gone'
+    category: grammar
+    severity: error
+    message: "Use the past participle 'gone' after auxiliary verbs."
+    scope: sentence
+    confidence: 0.99
+
+  - id: prose-grammar-have-wrote
+    pattern: '\b(had|have|has)\s+wrote\b'
+    replacement: '\1 written'
+    category: grammar
+    severity: error
+    message: "Use the past participle 'written' after auxiliary verbs."
+    scope: sentence
+    confidence: 0.99
+
+  - id: prose-grammar-had-saw
+    pattern: '\b(had|have|has)\s+saw\b'
+    replacement: '\1 seen'
+    category: grammar
+    severity: error
+    message: "Use the past participle 'seen' after auxiliary verbs."
+    scope: sentence
+    confidence: 0.99
+
+  # Document-level preferred capitalization and terminology
+  - id: prose-capitalization-github
+    pattern: '\bgithub\b'
+    replacement: 'GitHub'
+    category: capitalization
+    severity: info
+    message: "Capitalize the product name as 'GitHub' consistently in the document."
+    scope: document
+    ignore_case: true
+    confidence: 0.99
+
+  - id: prose-capitalization-javascript
+    pattern: '\bjavascript\b'
+    replacement: 'JavaScript'
+    category: capitalization
+    severity: info
+    message: "Capitalize the language name as 'JavaScript' consistently in the document."
+    scope: document
+    ignore_case: true
+    confidence: 0.99
+
+  - id: prose-capitalization-typescript
+    pattern: '\btypescript\b'
+    replacement: 'TypeScript'
+    category: capitalization
+    severity: info
+    message: "Capitalize the language name as 'TypeScript' consistently in the document."
+    scope: document
+    ignore_case: true
+    confidence: 0.99
+
+  - id: prose-capitalization-macos
+    pattern: '\bmacos\b'
+    replacement: 'macOS'
+    category: capitalization
+    severity: info
+    message: "Capitalize the platform name as 'macOS' consistently in the document."
+    scope: document
+    ignore_case: true
+    confidence: 0.99
+
+  - id: prose-capitalization-iphone
+    pattern: '\biphone\b'
+    replacement: 'iPhone'
+    category: capitalization
+    severity: info
+    message: "Capitalize the product name as 'iPhone' consistently in the document."
+    scope: document
+    ignore_case: true
+    confidence: 0.99
+
+  - id: prose-capitalization-youtube
+    pattern: '\byoutube\b'
+    replacement: 'YouTube'
+    category: capitalization
+    severity: info
+    message: "Capitalize the product name as 'YouTube' consistently in the document."
+    scope: document
+    ignore_case: true
+    confidence: 0.99
+
+  - id: prose-terminology-e-mail
+    pattern: '\be-mail\b'
+    replacement: 'email'
+    category: terminology
+    severity: info
+    message: "Use the preferred spelling 'email' consistently in the document."
+    scope: document
+    confidence: 0.96
+
+  - id: prose-terminology-web-site
+    pattern: '\bweb site\b'
+    replacement: 'website'
+    category: terminology
+    severity: info
+    message: "Use the preferred spelling 'website' consistently in the document."
+    scope: document
+    confidence: 0.96
+
+  # Repetition not covered by the existing multi-letter duplicate-word rule
+  - id: prose-repetition-double-pronoun-i
+    pattern: '\bI\s+I\b'
+    replacement: 'I'
+    category: repetition
+    severity: warning
+    message: "The pronoun 'I' is repeated; remove the accidental duplicate."
+    scope: sentence
+    ignore_case: false
+    confidence: 0.98
+
+  # Punctuation and spacing (live text scope)
+  - id: prose-spacing-double-space
+    pattern: '(?<=\S) {2,}(?=\S)'
+    replacement: ' '
+    category: punctuation
+    severity: warning
+    message: "Multiple spaces occur between words; use one space unless the spacing is intentional."
+    scope: live
+    ignore_case: false
+    confidence: 0.98
+
+  - id: prose-spacing-after-opening-parenthesis
+    pattern: '\([ \t]+'
+    replacement: '('
+    category: punctuation
+    severity: warning
+    message: "Remove the space immediately after the opening parenthesis."
+    scope: live
+    ignore_case: false
+    confidence: 0.99
+
+  - id: prose-spacing-before-closing-parenthesis
+    pattern: '[ \t]+\)'
+    replacement: ')'
+    category: punctuation
+    severity: warning
+    message: "Remove the space immediately before the closing parenthesis."
+    scope: live
+    ignore_case: false
+    confidence: 0.99
+
+  - id: prose-spacing-after-comma-semicolon
+    pattern: '([,;])(?=[A-Za-z])'
+    replacement: '\1 '
+    category: punctuation
+    severity: warning
+    message: "Add a space after the comma or semicolon."
+    scope: live
+    ignore_case: false
+    confidence: 0.98
+
+  - id: prose-spacing-after-question-exclamation
+    pattern: '([!?])(?=[A-Z])'
+    replacement: '\1 '
+    category: punctuation
+    severity: warning
+    message: "Add a space after the question or exclamation mark before the next sentence."
+    scope: live
+    ignore_case: false
+    confidence: 0.95

@@ -1,5 +1,5 @@
 """
-开机自启管理 - Windows注册表方式
+Auto-start Manager - Windows Registry Method
 """
 
 import sys
@@ -8,14 +8,14 @@ from pathlib import Path
 
 
 class AutoStartManager:
-    """管理Windows开机自启"""
+    """Manages Windows system startup auto-start."""
     
     REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
-    APP_NAME = "AIPromptOptimizer"
+    APP_NAME = "GCoach"
     
     @staticmethod
     def is_enabled() -> bool:
-        """检查是否已启用开机自启"""
+        """Check whether auto-start is enabled."""
         try:
             key = winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER,
@@ -35,11 +35,11 @@ class AutoStartManager:
     
     @staticmethod
     def enable():
-        """启用开机自启"""
+        """Enable auto-start."""
         try:
             exe_path = sys.executable
             if not exe_path.lower().endswith('.exe'):
-                # 开发环境，使用pythonw启动
+                # Development environment, launch using pythonw
                 exe_path = f'pythonw.exe "{Path(__file__).parent.parent / "main.py"}"'
             
             key = winreg.OpenKey(
@@ -58,12 +58,12 @@ class AutoStartManager:
             winreg.CloseKey(key)
             return True
         except Exception as e:
-            print(f"[AutoStart] 启用失败: {e}")
+            print(f"[AutoStart] Failed to enable: {e}")
             return False
     
     @staticmethod
     def disable():
-        """禁用开机自启"""
+        """Disable auto-start."""
         try:
             key = winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER,
@@ -78,5 +78,5 @@ class AutoStartManager:
             winreg.CloseKey(key)
             return True
         except Exception as e:
-            print(f"[AutoStart] 禁用失败: {e}")
+            print(f"[AutoStart] Failed to disable: {e}")
             return False

@@ -27,6 +27,7 @@ try:
         QSplitter,
         QGroupBox,
         QMessageBox,
+        QDialog,
     )
     PYQT_AVAILABLE = True
 except (ImportError, OSError) as e:
@@ -41,21 +42,35 @@ from core.correction import CorrectionController
 from core.correction.target import CorrectionTarget
 from core.correction.engine import BackgroundCorrectionEngine
 from core.dictionary import is_dictionary_candidate, PersonalDictionary
+from core.config_manager import ConfigManager
+from ui.settings_dialog import SettingsDialog
+from pathlib import Path
 from .floating_correction import FloatingCorrectionPopup, calculate_popup_position
+from .underline_overlay import UnderlineOverlayWindow
 from .presenter import UIPresenter
 
 
 class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
     """G-Coach 桌面主窗口"""
 
-    def __init__(self, monitor: LiveTextMonitor):
+    def __init__(self, monitor: LiveTextMonitor, config_manager: Optional[ConfigManager] = None):
         if not PYQT_AVAILABLE:
             raise RuntimeError("PyQt6 is not available in this environment (headless container).")
         super().__init__()
         self.monitor = monitor
+        self.config_manager = config_manager or ConfigManager(Path.home() / ".ai_prompt_optimizer")
+        
+        # Apply initial analysis config to pipeline
+        analysis_config = self.config_manager.get_analysis_config()
+        if hasattr(self.monitor.pipeline, "enable_fast"):
+            self.monitor.pipeline.enable_fast = analysis_config.get("enable_fast", True)
+        if hasattr(self.monitor.pipeline, "enable_heavy"):
+            self.monitor.pipeline.enable_heavy = analysis_config.get("enable_heavy", True)
+
         self.current_findings: List[Finding] = []
         self.correction_controller = CorrectionController()
         self.active_popup: Optional[FloatingCorrectionPopup] = None
+        self.underline_overlay: Optional[UnderlineOverlayWindow] = UnderlineOverlayWindow() if UnderlineOverlayWindow is not None else None
         self.last_popup_finding_id: Optional[str] = None
         self.last_popup_finding_signature: Optional[Tuple[str, str, str, int, int]] = None
         # Ignore is scoped to one exact control/text snapshot. The signature deliberately
@@ -179,6 +194,10 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
         self.stop_btn.setEnabled(False)
         header_layout.addWidget(self.stop_btn)
 
+        self.settings_btn = QPushButton("Settings", self)
+        self.settings_btn.clicked.connect(self._on_settings_clicked)
+        header_layout.addWidget(self.settings_btn)
+
         main_layout.addLayout(header_layout)
 
         # 2. 主体分栏：左侧为文本快照与发现列表，右侧为详细属性/冲突面板
@@ -272,6 +291,17 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.statusBar().showMessage("Monitoring stopped.")
+
+    def _on_settings_clicked(self):
+        """点击 Settings 按钮，打开设置对话框"""
+        dialog = SettingsDialog(self.config_manager, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            analysis_config = self.config_manager.get_analysis_config()
+            if hasattr(self.monitor.pipeline, "enable_fast"):
+                self.monitor.pipeline.enable_fast = analysis_config.get("enable_fast", True)
+            if hasattr(self.monitor.pipeline, "enable_heavy"):
+                self.monitor.pipeline.enable_heavy = analysis_config.get("enable_heavy", True)
+            logger.info("Updated analysis engine settings from SettingsDialog.")
 
     def _poll_monitor_state(self):
         """轮询从 monitor 获取最新状态并在 UI 线程上刷新"""
@@ -589,6 +619,34 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
     def _sync_floating_popup(self, findings: List[Finding], state: MonitorState):
         """根据当前 findings 和 monitor state 同步浮动纠正弹窗的显示与隐藏（支持多发现导航）"""
         visible_findings = self._filter_ignored_findings(findings, state)
+        
+        # Update Grammarly-style wavy underline overlay rects for all visible findings
+        if getattr(self, "underline_overlay", None) is not None:
+            target = CorrectionTarget(
+                control_id=state.control_id,
+                process_id=state.process_id,
+                hwnd=state.metadata.get("hwnd", 0),
+                automation_id=state.metadata.get("automation_id", ""),
+                control_name=state.metadata.get("control_name", ""),
+                control_type=state.control_type,
+                app_name=state.app_name,
+                original_text=state.text,
+            ) if state else None
+            if visible_findings and target:
+                items = []
+                for f in visible_findings:
+                    r = self._execute_uia_operation(
+                        BackgroundCorrectionEngine.get_finding_screen_rect,
+                        target,
+                        f,
+                        default=None,
+                    )
+                    if r is not None:
+                        items.append((r, f.category))
+                self.underline_overlay.set_items(items)
+            else:
+                self.underline_overlay.set_items([])
+
         if not visible_findings:
             if self.active_popup:
                 logger.info(
@@ -794,6 +852,8 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
             self.active_popup = None
             self.last_popup_finding_id = None
             self.last_popup_finding_signature = None
+        if getattr(self, "underline_overlay", None) is not None:
+            self.underline_overlay.set_rects([])
 
     def _handle_popup_accept_all(self, findings: List[Finding], target: CorrectionTarget):
         """Apply independent popup findings in one verified pass, then re-analyse once."""
@@ -828,6 +888,8 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
             self.active_popup = None
             self.last_popup_finding_id = None
             self.last_popup_finding_signature = None
+        if getattr(self, "underline_overlay", None) is not None:
+            self.underline_overlay.set_rects([])
             self.last_popup_findings_count = 0
 
     def _handle_popup_ignore(self, finding: Finding):
@@ -843,6 +905,8 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
             self.active_popup = None
             self.last_popup_finding_id = None
             self.last_popup_finding_signature = None
+        if getattr(self, "underline_overlay", None) is not None:
+            self.underline_overlay.set_rects([])
 
     def _handle_popup_add_to_dict(self, finding: Finding):
         """处理浮动弹窗或主界面的 Add to dictionary 点击：将原词加入共享个人词典，不修改文本，并强制触发重新分析检查"""
@@ -871,6 +935,8 @@ class GCoachWindow(QMainWindow if PYQT_AVAILABLE else object):
             self.active_popup = None
             self.last_popup_finding_id = None
             self.last_popup_finding_signature = None
+        if getattr(self, "underline_overlay", None) is not None:
+            self.underline_overlay.set_rects([])
 
     def _on_add_to_dict_clicked(self):
         """主界面点击 Add to Dictionary 按钮"""
@@ -910,7 +976,7 @@ def main() -> int:
     7. 进入 Qt 事件循环，并在退出时清理/停止监控器
     """
     import platform
-    from core.analysis import AnalysisPipeline, AnalysisResolver, HarperAnalysisEngine, GectorAnalysisEngine
+    from core.analysis import AnalysisPipeline, AnalysisResolver, HarperAnalysisEngine, GectorAnalysisEngine, SymSpellAnalysisEngine, RegexRulesAnalysisEngine
     from core.monitoring import WindowsUIAccessibilityTextSource, MockTextSource, LiveTextMonitor
 
     # 1. 初始化 Qt 应用
@@ -922,7 +988,16 @@ def main() -> int:
 
     # 2. 创建共享词典与分析管道
     shared_dictionary = PersonalDictionary()
-    pipeline = AnalysisPipeline(dictionary=shared_dictionary)
+    config_manager = ConfigManager(Path.home() / ".ai_prompt_optimizer")
+    analysis_config = config_manager.get_analysis_config()
+
+    pipeline = AnalysisPipeline(
+        dictionary=shared_dictionary,
+        enable_fast=analysis_config.get("enable_fast", True),
+        enable_heavy=analysis_config.get("enable_heavy", True),
+    )
+    pipeline.register_engine(SymSpellAnalysisEngine())
+    pipeline.register_engine(RegexRulesAnalysisEngine())
     pipeline.register_engine(HarperAnalysisEngine())
     pipeline.register_engine(GectorAnalysisEngine())
 
@@ -956,7 +1031,7 @@ def main() -> int:
         monitor.start()
 
     # 7. 创建主窗口
-    window = GCoachWindow(monitor)
+    window = GCoachWindow(monitor, config_manager)
     window.show()
 
     # 8. 运行 Qt 事件循环

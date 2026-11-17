@@ -37,7 +37,7 @@ class SymSpellAnalysisEngine(BaseAnalysisEngine):
     }
 
     def __init__(self, dictionary_path: Optional[str] = None):
-        super().__init__(name="symspell", version="0.1.0", is_local=True)
+        super().__init__(name="symspell", version="0.1.0", is_local=True, tier="fast")
         self.dictionary_path = dictionary_path
         self._sym_spell = None
         self._is_loaded = False
@@ -126,6 +126,19 @@ class SymSpellAnalysisEngine(BaseAnalysisEngine):
             if len(token) < 4:
                 continue
 
+            # 新增预检查：如果单词本身在词典中且不是高频粘连词，则无需进行分词检查
+            try:
+                from symspellpy import Verbosity
+                suggestions = self._sym_spell.lookup(token_lower, Verbosity.EXACT, max_dictionary_edit_distance=0)
+                KNOWN_JOINED_WORDS = {
+                    "whatare", "howare", "didyou", "inthe", "onthe",
+                    "thankyou", "goodmorning", "alot", "youare", "whatdo"
+                }
+                if suggestions and len(suggestions) > 0 and token_lower not in KNOWN_JOINED_WORDS:
+                    continue
+            except Exception:
+                pass
+
             try:
                 # 执行 SymSpell 纯词切分 (max_edit_distance=0)
                 result = self._sym_spell.word_segmentation(token_lower)
@@ -156,8 +169,8 @@ class SymSpellAnalysisEngine(BaseAnalysisEngine):
                             "whatare", "howare", "didyou", "inthe", "onthe",
                             "thankyou", "goodmorning", "alot", "youare", "whatdo"
                         }
-                        if token_lower in self._sym_spell.words and token_lower not in KNOWN_JOINED_WORDS:
-                            continue
+                        if token_lower in KNOWN_JOINED_WORDS:
+                            pass
 
                         # 保持原始大小写（例如 Thankyou -> Thank you, WHATARE -> What are）
                         replacement = self._preserve_capitalization(token, segmented)

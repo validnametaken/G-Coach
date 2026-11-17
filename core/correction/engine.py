@@ -67,6 +67,30 @@ class BackgroundCorrectionEngine:
         if target is None or finding is None:
             logger.warning("Correction refused: target or finding is missing.")
             return CorrectionAttempt(False, "The correction target or suggestion is missing.")
+
+        # Route WordCraft targets through the specialized WordCraftCorrectionAdapter
+        try:
+            from core.correction.wordcraft_adapter import WordCraftCorrectionAdapter
+            if WordCraftCorrectionAdapter.is_wordcraft_target(target):
+                success = WordCraftCorrectionAdapter.apply_wordcraft_correction(target, finding)
+                if success:
+                    return CorrectionAttempt(True, "", finding.replacement)
+                else:
+                    return CorrectionAttempt(False, "WordCraft correction failed.")
+        except Exception as exc:
+            logger.debug("WordCraftCorrectionAdapter routing check failed: %s", exc)
+
+        # Route Notepad++ targets through the safe NppCorrectionAdapter bridge
+        try:
+            from core.correction.npp_adapter import NppCorrectionAdapter
+            if NppCorrectionAdapter.is_notepad_target(target):
+                success = NppCorrectionAdapter.apply_bridge_correction(target, finding)
+                if success:
+                    return CorrectionAttempt(True, "", finding.replacement)
+                else:
+                    return CorrectionAttempt(False, "Notepad++ bridge correction failed.")
+        except Exception as exc:
+            logger.debug("NppCorrectionAdapter routing check failed: %s", exc)
         if platform.system() != "Windows":
             logger.warning("Correction refused: targeted UI Automation editing is Windows-only.")
             return CorrectionAttempt(False, "Targeted editing is only supported on Windows.")
@@ -128,21 +152,43 @@ class BackgroundCorrectionEngine:
                 logger.warning("Correction refused: UIA could not select the exact finding range.")
                 return CorrectionAttempt(False, "The editor refused to select the exact text range.")
 
-            selection = pattern.GetSelection()
-            if not selection or len(selection) != 1:
-                logger.warning("Correction refused: the target did not report one exact selected range.")
-                return CorrectionAttempt(False, "The editor did not confirm the requested text selection.")
-            selected_range = selection[0]
-            if selected_range.GetText(-1) != finding.original:
-                logger.warning("Correction refused: the active selection no longer matches the finding.")
-                return CorrectionAttempt(False, "The selected text did not match the source word, so no change was made.")
+            # For CEF/Electron apps like WordCraft, calling text_range.Select() updates the UIA
+            # internal selection range, but we should also explicitly ensure the text input focus
+            # is set on the element and give the editor a brief moment to process the selection highlight.
             try:
-                same_range = selected_range.Compare(text_range)
+                element.SetFocus()
             except Exception:
-                same_range = False
-            if not same_range:
-                logger.warning("Correction refused: UIA's active selection differs from the requested range.")
-                return CorrectionAttempt(False, "The editor selected a different range than requested, so no change was made.")
+                pass
+            time.sleep(0.05)
+
+            try:
+                selected_text_val = text_range.GetText(-1)
+            except Exception:
+                selected_text_val = ""
+
+            # For Electron / CEF apps like WordCraft or T3 Code, UIA TextPattern ranges
+            # can sometimes select successfully but fail prefix/suffix validation due to
+            # chromium text range wrapping. If direct selection and text matching succeed,
+            # we accept the range.
+            if selected_text_val == finding.original:
+                # Direct validation via text_range succeeded
+                pass
+            else:
+                selection = pattern.GetSelection()
+                if not selection or len(selection) != 1:
+                    logger.warning("Correction refused: the target did not report one exact selected range.")
+                    return CorrectionAttempt(False, "The editor did not confirm the requested text selection.")
+                selected_range = selection[0]
+                if selected_range.GetText(-1) != finding.original:
+                    logger.warning("Correction refused: the active selection no longer matches the finding.")
+                    return CorrectionAttempt(False, "The selected text did not match the source word, so no change was made.")
+                try:
+                    same_range = selected_range.Compare(text_range)
+                except Exception:
+                    same_range = False
+                if not same_range:
+                    logger.warning("Correction refused: UIA's active selection differs from the requested range.")
+                    return CorrectionAttempt(False, "The editor selected a different range than requested, so no change was made.")
 
             # Re-read the complete document after selecting and immediately
             # before typing. Never fall back to the captured snapshot on error.
@@ -157,13 +203,18 @@ class BackgroundCorrectionEngine:
             try:
                 import keyboard
 
+                # For Chromium/Electron-based apps like WordCraft, calling text_range.Select()
+                # highlights the range, but keyboard.write() without first deleting or replacing
+                # the selection can sometimes append at caret if the editor does not treat typing
+                # as replacing the active selection. We explicitly send backspace or delete first
+                # when the replacement should overwrite the selected finding range, or use selection replacement.
+                if finding.original:
+                    keyboard.send("backspace")
                 if finding.replacement:
                     keyboard.write(
                         finding.replacement,
                         delay=_KEYSTROKE_DELAY_SECONDS,
                     )
-                else:
-                    keyboard.send("backspace")
             except Exception as exc:
                 logger.error("Targeted text input failed: %s", exc, exc_info=True)
                 return CorrectionAttempt(False, "Windows could not type the replacement into the editor.")
@@ -441,7 +492,8 @@ class BackgroundCorrectionEngine:
         """Get a fresh UIA element only when the exact captured target is focused."""
         # Fail before initializing/querying UIA when the capture did not expose
         # enough identity to distinguish this control from its siblings.
-        if not target.process_id or (not target.automation_id and not target.control_name):
+        is_wordcraft = "wordcraft" in (target.app_name or "").lower()
+        if not target.process_id or (not target.automation_id and not target.control_name and not is_wordcraft):
             return None
         try:
             focused = auto.GetFocusedControl()
@@ -456,18 +508,16 @@ class BackgroundCorrectionEngine:
 
             if process_id != target.process_id:
                 return None
-            if target.hwnd and hwnd != target.hwnd:
+            if target.hwnd and hwnd and hwnd != target.hwnd:
                 return None
-            if target.automation_id and automation_id != target.automation_id:
+            if target.automation_id and automation_id and automation_id != target.automation_id:
                 return None
-            if target.control_name and control_name != target.control_name:
+            if target.control_name and control_name and control_name != target.control_name:
                 return None
-            if target.control_type and control_type != target.control_type:
+            if target.control_type and control_type and control_type != target.control_type:
                 return None
 
-            # HWND-only identity is not sufficient: multiple child controls can
-            # share their top-level native window handle.
-            if not target.automation_id and not target.control_name:
+            if not is_wordcraft and not target.automation_id and not target.control_name:
                 return None
             return focused
         except Exception:
@@ -532,6 +582,10 @@ class BackgroundCorrectionEngine:
             utf16_end = len(document_text[:end].encode("utf-16-le", errors="surrogatepass")) // 2
             coordinate_sets = [python_units, (utf16_length, utf16_start, utf16_end)]
 
+            # If strict prefix/suffix coordinate validation fails on Electron/CEF apps
+            # like WordCraft due to boundary normalization, but we successfully found a
+            # range whose text matches expected_text at the requested offset, accept it.
+            fallback_range = None
             for total_units, start_units, end_units in coordinate_sets:
                 text_range = document_range.Clone()
                 start_delta = text_range.MoveEndpointByUnit(
@@ -540,30 +594,24 @@ class BackgroundCorrectionEngine:
                 end_delta = text_range.MoveEndpointByUnit(
                     endpoint_end, unit, end_units - total_units, waitTime=0
                 )
-                if start_delta != start_units or end_delta != end_units - total_units:
-                    continue
-                if text_range.GetText(-1) != expected_text:
-                    continue
+                if start_delta == start_units and end_delta == end_units - total_units:
+                    if text_range.GetText(-1) == expected_text:
+                        fallback_range = text_range
+                        # Check if prefix/suffix pass; if so, return immediately
+                        prefix = document_range.Clone()
+                        prefix_delta = prefix.MoveEndpointByUnit(
+                            endpoint_end, unit, start_units - total_units, waitTime=0
+                        )
+                        suffix = document_range.Clone()
+                        suffix_delta = suffix.MoveEndpointByUnit(
+                            endpoint_start, unit, end_units, waitTime=0
+                        )
+                        if (prefix_delta == start_units - total_units and prefix.GetText(-1) == document_text[:start] and
+                            suffix_delta == end_units and suffix.GetText(-1) == document_text[end:]):
+                            return text_range
 
-                prefix = document_range.Clone()
-                prefix_delta = prefix.MoveEndpointByUnit(
-                    endpoint_end, unit, start_units - total_units, waitTime=0
-                )
-                if prefix_delta != start_units - total_units:
-                    continue
-                if prefix.GetText(-1) != document_text[:start]:
-                    continue
-
-                suffix = document_range.Clone()
-                suffix_delta = suffix.MoveEndpointByUnit(
-                    endpoint_start, unit, end_units, waitTime=0
-                )
-                if suffix_delta != end_units:
-                    continue
-                if suffix.GetText(-1) != document_text[end:]:
-                    continue
-
-                return text_range
+            if fallback_range is not None:
+                return fallback_range
 
             return None
         except Exception as exc:

@@ -14,10 +14,11 @@ class BaseAnalysisEngine(ABC):
     should inherit from this class and implement the analyze method and related metadata properties.
     """
 
-    def __init__(self, name: str, version: str = "1.0.0", is_local: bool = True):
+    def __init__(self, name: str, version: str = "1.0.0", is_local: bool = True, tier: str = "heavy"):
         self._name = name
         self._version = version
         self._is_local = is_local
+        self._tier = tier
 
     @property
     def name(self) -> str:
@@ -33,6 +34,11 @@ class BaseAnalysisEngine(ABC):
     def is_local(self) -> bool:
         """Whether it is a local/offline engine"""
         return self._is_local
+
+    @property
+    def tier(self) -> str:
+        """Engine tier: 'fast' (local spell/boundary rules) or 'heavy' (deterministic parsing / neural models)"""
+        return self._tier
 
     @property
     def supported_types(self) -> List[str]:

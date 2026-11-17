@@ -1,5 +1,5 @@
 """
-设置对话框 - 苹果风格
+Settings Dialog - Apple Style (English)
 """
 
 import threading
@@ -11,23 +11,25 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
     QWidget, QFormLayout, QLineEdit, QPushButton,
     QLabel, QSpinBox, QDoubleSpinBox, QComboBox,
-    QMessageBox,
+    QMessageBox, QListWidget, QListWidgetItem,
+    QCheckBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QKeyEvent, QColor
 
 from ui.apple_style import Colors, Spacing, Radius
-from PyQt6.QtWidgets import QCheckBox
 from core.autostart import AutoStartManager
 from ui.custom_titlebar import CustomTitleBar
+from core.dictionary import PersonalDictionary
+from core.analysis import CustomRuleLoader
 
 
 class HotkeyCaptureDialog(QDialog):
-    """快捷键捕获对话框"""
+    """Shortcut capture dialog"""
 
     def __init__(self, current_modifiers: list, current_key: str, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("按下快捷键...")
+        self.setWindowTitle("Press Shortcut Key...")
         self.setFixedSize(420, 200)
         self.modifiers = current_modifiers.copy()
         self.key = current_key
@@ -38,8 +40,8 @@ class HotkeyCaptureDialog(QDialog):
         layout.setSpacing(20)
 
         self.label = QLabel(
-            "请按下你想要的快捷键组合...\n\n"
-            "当前: " + self._format_key(current_modifiers, current_key)
+            "Please press your desired shortcut combination...\n\n"
+            "Current: " + self._format_key(current_modifiers, current_key)
         )
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setProperty("class", "secondary")
@@ -48,11 +50,11 @@ class HotkeyCaptureDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(Spacing.SM)
 
-        self.clear_btn = QPushButton("清除")
+        self.clear_btn = QPushButton("Clear")
         self.clear_btn.clicked.connect(self._on_clear)
         btn_layout.addWidget(self.clear_btn)
 
-        self.cancel_btn = QPushButton("取消")
+        self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(self.cancel_btn)
         layout.addLayout(btn_layout)
@@ -77,7 +79,7 @@ class HotkeyCaptureDialog(QDialog):
                 self.modifiers = sorted(list(self._pressed_modifiers))
                 self.key = char.lower()
                 self.label.setText(
-                    f"已捕获: {self._format_key(self.modifiers, self.key)}"
+                    f"Captured: {self._format_key(self.modifiers, self.key)}"
                 )
                 self.accept()
                 return
@@ -104,13 +106,13 @@ class HotkeyCaptureDialog(QDialog):
     @staticmethod
     def _format_key(modifiers, key):
         if not key and not modifiers:
-            return "未设置"
+            return "Not Set"
         parts = modifiers + ([key.upper()] if key else [])
         return " + ".join(parts)
 
 
 class SettingsDialog(QDialog):
-    """设置对话框 - 苹果风格"""
+    """Settings Dialog - Apple Style"""
 
     fetch_finished = pyqtSignal(list, str)
 
@@ -121,7 +123,7 @@ class SettingsDialog(QDialog):
         self._load_config()
 
     def _init_ui(self):
-        self.setWindowTitle("设置")
+        self.setWindowTitle("Settings")
         self.setMinimumSize(640, 540)
 
         layout = QVBoxLayout(self)
@@ -130,7 +132,7 @@ class SettingsDialog(QDialog):
 
         tabs = QTabWidget()
 
-        # === API 设置标签页 ===
+        # === API Settings Tab ===
         api_tab = QWidget()
         api_layout = QFormLayout(api_tab)
         api_layout.setSpacing(16)
@@ -145,22 +147,22 @@ class SettingsDialog(QDialog):
         self.api_key.setPlaceholderText("sk-...")
         api_layout.addRow("API Key", self.api_key)
 
-        # 模型选择行
+        # Model selection row
         model_row = QHBoxLayout()
         model_row.setSpacing(Spacing.SM)
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
         self.model_combo.setMinimumWidth(250)
-        self.model_combo.setPlaceholderText("选择或输入模型名称...")
+        self.model_combo.setPlaceholderText("Select or enter model name...")
         model_row.addWidget(self.model_combo, 1)
 
-        self.btn_fetch_models = QPushButton("获取")
+        self.btn_fetch_models = QPushButton("Fetch")
         self.btn_fetch_models.setFixedWidth(76)
         self.btn_fetch_models.setMinimumHeight(36)
         self.btn_fetch_models.clicked.connect(self._on_fetch_models)
         model_row.addWidget(self.btn_fetch_models)
 
-        api_layout.addRow("模型", model_row)
+        api_layout.addRow("Model", model_row)
 
         self.fetch_status = QLabel("")
         self.fetch_status.setProperty("class", "status")
@@ -177,34 +179,56 @@ class SettingsDialog(QDialog):
         self.temperature.setValue(0.7)
         api_layout.addRow("Temperature", self.temperature)
 
-        tabs.addTab(api_tab, "API 设置")
+        tabs.addTab(api_tab, "API Settings")
 
-        # === 通用设置标签页 ===
+        # === General Settings Tab ===
         general_tab = QWidget()
         general_layout = QVBoxLayout(general_tab)
         general_layout.setContentsMargins(24, 20, 24, 20)
         general_layout.setSpacing(16)
         
-        self.autostart_checkbox = QCheckBox("开机自动启动")
+        self.autostart_checkbox = QCheckBox("Start on system startup")
         self.autostart_checkbox.setChecked(AutoStartManager.is_enabled())
         general_layout.addWidget(self.autostart_checkbox)
         
         general_layout.addStretch()
-        tabs.addTab(general_tab, "通用")
+        tabs.addTab(general_tab, "General")
 
+        # === Analysis Engines Tab ===
+        analysis_tab = QWidget()
+        analysis_layout = QVBoxLayout(analysis_tab)
+        analysis_layout.setContentsMargins(24, 20, 24, 20)
+        analysis_layout.setSpacing(16)
 
-        # 连接信号
+        analysis_info_label = QLabel(
+            "Configure analysis engines for the real-time proofreading pipeline:\n"
+            "• Fast Tier: Local SymSpell spelling check & regex rules (millisecond response).\n"
+            "• Heavy Tier: Harper grammar check & GECToR deep neural correction."
+        )
+        analysis_info_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY}; font-size: 13px; line-height: 1.5;")
+        analysis_layout.addWidget(analysis_info_label)
+
+        self.enable_fast_checkbox = QCheckBox("Enable Fast Tier (SymSpell & Regex Rules)")
+        analysis_layout.addWidget(self.enable_fast_checkbox)
+
+        self.enable_heavy_checkbox = QCheckBox("Enable Heavy Tier (Harper & GECToR AI)")
+        analysis_layout.addWidget(self.enable_heavy_checkbox)
+
+        analysis_layout.addStretch()
+        tabs.addTab(analysis_tab, "Analysis Engines")
+
+        # Connect signals
         self.fetch_finished.connect(self._on_fetch_finished)
 
-        # === 快捷键设置标签页 ===
+        # === Hotkey Tab ===
         hotkey_tab = QWidget()
         hotkey_layout = QVBoxLayout(hotkey_tab)
         hotkey_layout.setSpacing(24)
         hotkey_layout.setContentsMargins(24, 20, 24, 20)
 
         info_label = QLabel(
-            "设置全局快捷键：在任意软件的输入框中选中文本后，\n"
-            "按下此快捷键将自动调用 AI 优化并替换原文本。"
+            "Set global shortcut: after selecting text in any app input box,\n"
+            "press this shortcut to automatically invoke AI optimization and replace original text."
         )
         info_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY}; font-size: 13px; line-height: 1.5;")
         hotkey_layout.addWidget(info_label)
@@ -215,9 +239,9 @@ class SettingsDialog(QDialog):
         self.hotkey_label = QLabel("Ctrl + Shift + O")
         self.hotkey_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hotkey_label.setProperty("class", "hotkey-display")
-        hk_form.addRow("当前快捷键", self.hotkey_label)
+        hk_form.addRow("Current Shortcut", self.hotkey_label)
 
-        self.btn_capture = QPushButton("重新捕获快捷键")
+        self.btn_capture = QPushButton("Recapture Shortcut")
         self.btn_capture.setMinimumHeight(40)
         self.btn_capture.clicked.connect(self._on_capture_hotkey)
         hk_form.addRow("", self.btn_capture)
@@ -225,21 +249,53 @@ class SettingsDialog(QDialog):
         hotkey_layout.addLayout(hk_form)
         hotkey_layout.addStretch()
 
-        tabs.addTab(hotkey_tab, "快捷键")
+        tabs.addTab(hotkey_tab, "Hotkey")
+
+        # === Dictionary Tab ===
+        dict_tab = QWidget()
+        dict_layout = QVBoxLayout(dict_tab)
+        dict_layout.setSpacing(16)
+        dict_layout.setContentsMargins(24, 20, 24, 20)
+
+        dict_label = QLabel("Personal Dictionary (Ignored correct words):")
+        dict_layout.addWidget(dict_label)
+
+        dict_row = QHBoxLayout()
+        self.dict_list = QListWidget()
+        dict_row.addWidget(self.dict_list)
+
+        dict_btn_layout = QVBoxLayout()
+        self.dict_input = QLineEdit()
+        self.dict_input.setPlaceholderText("Enter new word...")
+        dict_btn_layout.addWidget(self.dict_input)
+
+        self.btn_add_word = QPushButton("Add Word")
+        self.btn_add_word.clicked.connect(self._on_add_word)
+        dict_btn_layout.addWidget(self.btn_add_word)
+
+        self.btn_remove_word = QPushButton("Remove Selected")
+        self.btn_remove_word.clicked.connect(self._on_remove_word)
+        dict_btn_layout.addWidget(self.btn_remove_word)
+        dict_btn_layout.addStretch()
+        dict_row.addLayout(dict_btn_layout)
+
+        dict_layout.addLayout(dict_row)
+
+        tabs.addTab(dict_tab, "Dictionary")
 
         layout.addWidget(tabs)
 
-        # 确定/取消按钮
+        # Confirm / Cancel buttons
         btn_box = QHBoxLayout()
         btn_box.addStretch()
 
-        self.btn_cancel = QPushButton("取消")
+        self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.setFixedWidth(100)
         self.btn_cancel.setMinimumHeight(40)
         self.btn_cancel.clicked.connect(self.reject)
         btn_box.addWidget(self.btn_cancel)
 
-        self.btn_save = QPushButton("保存")
+        self.btn_save = QPushButton("Save")
         self.btn_save.setFixedWidth(100)
         self.btn_save.setMinimumHeight(40)
         self.btn_save.setProperty("class", "primary")
@@ -271,6 +327,32 @@ class SettingsDialog(QDialog):
         self._current_key = hotkey.get("key", "o")
         self._update_hotkey_label()
 
+        analysis_config = self.config_manager.get_analysis_config()
+        self.enable_fast_checkbox.setChecked(analysis_config.get("enable_fast", True))
+        self.enable_heavy_checkbox.setChecked(analysis_config.get("enable_heavy", True))
+
+        # Load personal dictionary words
+        self.personal_dict = PersonalDictionary()
+        self.dict_list.clear()
+        for word in self.personal_dict.words():
+            self.dict_list.addItem(word)
+
+    def _on_add_word(self):
+        word = self.dict_input.text().strip()
+        if word:
+            self.personal_dict.add_word(word)
+            self.dict_input.clear()
+            self.dict_list.clear()
+            for w in self.personal_dict.words():
+                self.dict_list.addItem(w)
+
+    def _on_remove_word(self):
+        item = self.dict_list.currentItem()
+        if item:
+            word = item.text()
+            self.personal_dict.remove_word(word)
+            self.dict_list.takeItem(self.dict_list.row(item))
+
     def _update_hotkey_label(self):
         parts = self._current_modifiers + [self._current_key.upper()]
         self.hotkey_label.setText(" + ".join(parts))
@@ -287,19 +369,19 @@ class SettingsDialog(QDialog):
                 self._current_key = dialog.key
                 self._update_hotkey_label()
             else:
-                QMessageBox.warning(self, "提示", "请按下包含修饰键(Ctrl/Alt/Shift/Win)的组合键")
+                QMessageBox.warning(self, "Notice", "Please press a shortcut combination including modifier keys (Ctrl/Alt/Shift/Win).")
 
     def _on_fetch_models(self):
         base_url = self.api_url.text().strip()
         api_key = self.api_key.text().strip()
 
         if not base_url or not api_key:
-            QMessageBox.warning(self, "提示", "请先填写 API Base URL 和 API Key")
+            QMessageBox.warning(self, "Notice", "Please fill in API Base URL and API Key first.")
             return
 
         self.btn_fetch_models.setEnabled(False)
         self.btn_fetch_models.setText("...")
-        self.fetch_status.setText("正在获取模型列表...")
+        self.fetch_status.setText("Fetching model list...")
         self.fetch_status.setStyleSheet(f"color: {Colors.ACCENT}; font-size: 12px;")
 
         def _fetch():
@@ -323,15 +405,15 @@ class SettingsDialog(QDialog):
 
     def _on_fetch_finished(self, models: list, error: str):
         self.btn_fetch_models.setEnabled(True)
-        self.btn_fetch_models.setText("获取")
+        self.btn_fetch_models.setText("Fetch")
 
         if error:
-            self.fetch_status.setText(f"获取失败: {error}")
+            self.fetch_status.setText(f"Fetch failed: {error}")
             self.fetch_status.setStyleSheet(f"color: {Colors.ERROR}; font-size: 12px;")
             return
 
         if not models:
-            self.fetch_status.setText("未获取到模型")
+            self.fetch_status.setText("No models retrieved")
             self.fetch_status.setStyleSheet(f"color: {Colors.ERROR}; font-size: 12px;")
             return
 
@@ -342,7 +424,7 @@ class SettingsDialog(QDialog):
             self.model_combo.setCurrentText(current)
 
         self._saved_models = models
-        self.fetch_status.setText(f"已获取 {len(models)} 个模型")
+        self.fetch_status.setText(f"Retrieved {len(models)} models")
         self.fetch_status.setStyleSheet(f"color: {Colors.SUCCESS}; font-size: 12px;")
 
     def _on_save(self):
@@ -354,7 +436,9 @@ class SettingsDialog(QDialog):
         self.config_manager.set_api_config("max_tokens", self.max_tokens.value())
         self.config_manager.set_api_config("temperature", self.temperature.value())
         self.config_manager.set_hotkey(self._current_modifiers, self._current_key)
-        # 保存开机自启设置
+        self.config_manager.set_analysis_config("enable_fast", self.enable_fast_checkbox.isChecked())
+        self.config_manager.set_analysis_config("enable_heavy", self.enable_heavy_checkbox.isChecked())
+        # Save autostart settings
         if self.autostart_checkbox.isChecked():
             AutoStartManager.enable()
         else:

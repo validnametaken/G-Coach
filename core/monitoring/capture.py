@@ -369,10 +369,11 @@ class WindowsUIAccessibilityTextSource(TextSource):
 
         uia_process_path = process_image_path(process_id)
         uia_app_name = uia_process_path.replace("/", "\\").rsplit("\\", 1)[-1]
+        resolved_app_name = foreground_app_name or uia_app_name or class_name or ""
 
         is_editable = True
         non_editable_types = {"ButtonControl", "ImageControl", "TextControl", "CheckBoxControl", "RadioButtonControl", "MenuControl", "MenuItemControl", "ScrollBarControl", "ProgressBarControl", "SliderControl"}
-        if control_type in non_editable_types:
+        if control_type in non_editable_types and resolved_app_name.lower() not in {"wordcraft.exe", "t3-code.exe"}:
             has_value_pattern = False
             has_text_pattern = False
             try:
@@ -388,7 +389,7 @@ class WindowsUIAccessibilityTextSource(TextSource):
 
         try:
             val_pattern = focused.GetPattern(auto.PatternId.ValuePattern)
-            if val_pattern and getattr(val_pattern, "IsReadOnly", False):
+            if val_pattern and getattr(val_pattern, "IsReadOnly", False) and resolved_app_name.lower() not in {"wordcraft.exe", "t3-code.exe"}:
                 is_editable = False
         except Exception:
             pass
@@ -430,7 +431,7 @@ class WindowsUIAccessibilityTextSource(TextSource):
         # Prefer the actual foreground executable. If foreground lookup is
         # unavailable, use the UIA element's process executable; never use its
         # ControlTypeName as the application identity.
-        app_name = foreground_app_name or uia_app_name or class_name or ""
+        app_name = resolved_app_name
 
         control_info = f"{control_type} | {name}" if name else control_type
 

@@ -1,33 +1,33 @@
 @echo off
 chcp 65001 >nul
 echo ============================================
-echo    G-Coach - 启动脚本
+echo    G-Coach - Startup Script
 echo ============================================
 echo.
 
-:: 检查 Python
+:: Check Python
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [错误] 未检测到 Python，请先安装 Python 3.10+
+    echo [Error] Python not detected. Please install Python 3.10+ first.
     pause
     exit /b 1
 )
 
-:: 检查依赖
-echo [1/2] 检查依赖...
+:: Check dependencies
+echo [1/2] Checking dependencies...
 python -c "import PyQt6, pyperclip, keyboard, win32api, httpx, uiautomation, symspellpy" >nul 2>&1
 if %errorlevel% neq 0 (
-    echo 正在安装依赖...
+    echo Installing dependencies...
     python -m pip install -r requirements.txt
     if errorlevel 1 (
-        echo [错误] 依赖安装失败。
+        echo [Error] Failed to install dependencies.
         pause
         exit /b 1
     )
 )
 
-:: 启动
-echo [2/2] 启动程序...
+:: Start application
+echo [2/2] Starting application...
 python gcoach.py %*
 set "APP_EXIT_CODE=%ERRORLEVEL%"
 
